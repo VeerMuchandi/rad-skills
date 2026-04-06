@@ -15,7 +15,7 @@ This document serves as a long-form, comprehensive reference for building, orche
 1.  **Ask Permission**: "Shall I check for updates to the ADK references from the official global cache?"
 2.  **Execute Update**: If the user agrees, run:
     ```bash
-    python3 ~/.gemini/jetski/skills/adk_developer/scripts/update_skill.py
+    python3 scripts/update_skill.py
     ```
 3.  **Confirm**: Report the update status before proceeding.
 
@@ -417,6 +417,10 @@ Tools extend an agent's abilities beyond text generation.
 
 ### 7.1 Defining Function Tools: Principles & Best Practices
 
+*   **Import**: Use the correct path:
+    ```python
+    from google.adk.tools.tool_context import ToolContext
+    ```
 *   **Signature**: `def my_tool(param1: Type, param2: Type, tool_context: ToolContext) -> dict:`
 *   **Parameters**: Clear names, required type hints, **NO DEFAULT VALUES**.
 *   **Return Type**: **Must** be a `dict` (JSON-serializable).
@@ -567,7 +571,6 @@ remote_app = agent_engines.create(
     display_name="My Production Agent"
 )
 ```
-
 ### 12.3 Cloud Run
 
 Serverless container platform.
@@ -640,6 +643,7 @@ Systematically assess agent performance using `eval_cases` defined in `.evalset.
 
 ## 17. General Best Practices & Common Pitfalls
 
+*   **Agent Greetings & Onboarding**: Upon initial invocation, an agent should always orient the user. It must introduce itself and clearly explain what it can do before prompting for input or executing standard flows.
 *   **Start Simple**: Begin with `LlmAgent` and mock tools.
 *   **Dependency Management**: Use `requirements.txt`.
 *   **Secrets Management**: Never hardcode API keys. Use `.env`.

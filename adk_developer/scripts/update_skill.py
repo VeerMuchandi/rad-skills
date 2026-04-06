@@ -20,7 +20,7 @@ This script synchronizes the ADK skill resources with the official reference rep
 It ensures that the skill, now located globally, stays up-to-date.
 
 Logic:
-1.  Defines a global cache directory: `~/.gemini/jetski/cache/repos/adk`.
+1.  Defines a global cache directory relative to the skill root.
 2.  Clones the official ADK repo (https://github.com/google/adk-python) if not present.
 3.  Pulls the latest changes if present.
 4.  Synchronizes key directories into the skill folder.
@@ -35,8 +35,7 @@ from pathlib import Path
 # Configuration
 SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPT_DIR.parent
-USER_HOME = Path.home()
-CACHE_ROOT = USER_HOME / ".gemini" / "jetski" / "cache" / "repos"
+CACHE_ROOT = SKILL_ROOT.parent.parent / "cache" / "repos"
 REPO_CACHE_PATH = CACHE_ROOT / "adk"
 OFFICIAL_REPO_URL = "https://github.com/google/adk-python.git"
 

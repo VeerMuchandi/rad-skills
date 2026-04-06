@@ -71,8 +71,8 @@ google-cloud-aiplatform[agent_engines,adk]
 Instead of manually creating files, run the provided helper script. It will intelligently scan your agent directory and generate/update `.ae_ignore`, `requirements.txt`, and `.env` with the correct configurations.
 
 ```bash
-# Run the preparation script pointing to your agent directory
-python3 ~/.gemini/jetski/skills/agent_engine_terraform_deployer/scripts/prepare_agent.py .
+# Run the preparation script pointing to your agent directory (replace /path/to/your/agent)
+python3 scripts/prepare_agent.py /path/to/your/agent
 ```
 
 This script will:
@@ -143,3 +143,59 @@ Use this to deploy code from a remote repository.
 ### E. IAM Propagation Wait (Error Code 3)
 **The Issue**: Agent Engine creation fails (Error Code 3) if the service account roles haven't finished propagating.
 **The Solution**: The CFF module includes a `time_sleep`. If you encounter "Error code 3" on the first run, simply retry `terraform apply` after a few minutes.
+
+## 5. A2A Authorization Resource (Gemini Enterprise)
+
+When deploying A2A agents that require OAuth (like A2UI), you must create an `AGENT_AUTHORIZATION` resource in Gemini Enterprise.
+
+### 5.1 Prerequisite: Create Web OAuth Client
+
+Before creating the authorization resource, the user must create a Web OAuth Client in the Google Cloud Console for the project.
+
+1.  Navigate to **APIs & Services > Credentials** in the Cloud Console.
+2.  Click **Create Credentials > OAuth client ID**.
+3.  Select Application type: **Web application**.
+4.  Add the following **Authorized redirect URIs**:
+    *   `https://vertexaisearch.cloud.google.com/oauth-redirect`
+    *   `https://vertexaisearch.cloud.google.com/static/oauth/oauth.html`
+5.  Save the Client ID and Client Secret.
+
+### 5.2 Construct authorizationUri
+
+Construct the `authorizationUri` using the Client ID and the encoded redirect URI:
+
+```text
+https://accounts.google.com/o/oauth2/v2/auth?client_id=<YOUR_CLIENT_ID>&redirect_uri=https%3A%2F%2Fvertexaisearch.cloud.google.com%2Fstatic%2Foauth%2Foauth.html&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform&include_granted_scopes=true&response_type=code&access_type=offline&prompt=consent
+```
+
+### 5.3 Create Authorization Resource via cURL
+
+Use `curl` with the **Global Endpoint** and include the `X-Goog-User-Project` header.
+
+```bash
+curl -X POST \
+   -H "Authorization: Bearer \$(gcloud auth application-default print-access-token)" \
+   -H "Content-Type: application/json" \
+   -H "X-Goog-User-Project: <PROJECT_ID>" \
+   "https://global-discoveryengine.googleapis.com/v1alpha/projects/<PROJECT_ID>/locations/global/authorizations?authorizationId=<AUTH_ID>" \
+   -d '{
+      "name": "projects/<PROJECT_ID>/locations/global/authorizations/<AUTH_ID>",
+      "serverSideOauth2": {
+         "clientId": "<CLIENT_ID>",
+         "clientSecret": "<CLIENT_SECRET>",
+         "authorizationUri": "<AUTH_URI>",
+         "tokenUri": "<TOKEN_URI>"
+      }
+   }'
+```
+
+Replace `<PROJECT_ID>`, `<AUTH_ID>`, `<CLIENT_ID>`, `<CLIENT_SECRET>`, `<AUTH_URI>`, and `<TOKEN_URI>`.
+
+## 6. A2UI Agent Deployments (Hard Redirection)
+
+> [!CAUTION]
+> **Terraform deployments are NOT supported for A2UI agents in this repository.** 
+> A2UI agents require a complex Custom Executor setup (to intercept streams and yield binary `DataPart` objects) which relies on Python Pickle-based deployments. Terraform uses Source-based (`tar.gz`) deployments and cannot support this natively.
+
+**If you need to deploy an A2UI agent, you MUST use the Python SDK Deployer.**
+Please refer to the `Agent Engine Python Deployer` skill for instructions on Pickle-based deployments.

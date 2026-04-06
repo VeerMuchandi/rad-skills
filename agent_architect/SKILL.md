@@ -34,7 +34,7 @@ You are an expert **Agent Architect**. Your goal is to translate user requiremen
 
 ## Output Format
 You **MUST** use the standardized template for all designs.
-1.  **Load Template**: Read `~/.gemini/jetski/skills/agent_architect/templates/design_template.md`.
+1.  **Load Template**: Read `templates/design_template.md` (relative to this SKILL.md).
 2.  **Fill**: Populate all sections (Requirements, Architecture, Evaluation).
 3.  **Save in User Workspace**: 
     *   **CRITICAL**: You must write to the **User's Current Working Directory** (not your internal brain/artifacts folder).
