@@ -281,6 +281,27 @@ Refer to the `Agent Engine Python Deployer` skill for instructions on how to pac
 
 13. **Unique Component IDs**: To avoid client-side state collisions, component IDs must be unique across the session, especially when generating identical templated items like search result cards (e.g., `doctor_card_1`, `doctor_card_2`).
 
+### Handling Rich UI Inputs in Gemini Enterprise
+When deploying A2UI agents to Gemini Enterprise and using rich UI components (like buttons or forms), be aware of how user inputs are delivered to the backend:
+*   **The Problem**: Clicking a button in the UI often sends a generic text message like `"User action triggered."` as the primary user input. Relying solely on `context.get_user_input()` will cause the agent to receive this generic string and lose context, leading to loops or resets.
+*   **The Solution**: The actual data payload (including the `context` defined in the button action) is delivered in a separate **`DataPart`** of the message with mimeType `application/json+a2ui`.
+*   **Implementation**: In your custom `agent_executor.py`, you MUST iterate through the `parts` of the incoming message, look for the `DataPart` containing `userAction`, and extract the specific message or parameters from it to override or augment the query before passing it to the agent!
+
+### TrustedHTML Errors as Red Herrings
+*   **The Problem**: You may see `TrustedHTML` CSP policy errors in the browser console when A2UI components fail to render. This can easily be mistaken for a component schema or sanitization issue.
+*   **The Cause**: In many cases, these errors are actually caused by **improper authorization or registration** of the agent in Gemini Enterprise, which prevents the client from safely loading the resources.
+*   **The Solution**: Do not waste time refactoring components to fix the HTML. Instead, check the agent registration. You may need to unregister the agent, delete the authorization resource, recreate the authorization resource with correct credentials, and then re-register the agent.
+
+### State Persistence vs. Transcript Echoing in Multi-Replica Environments
+*   **The Problem**: In multi-replica environments like Gemini Enterprise, relying on ADK's in-memory `session.state` to preserve user choices (like plan type) across turns can fail. If Turn 2 hits a different replica than Turn 1, the in-memory state is lost, causing the agent to loop back and ask for the information again.
+*   **The Solution**: Use **Visible Transcript Echoing** as a fallback or primary mechanism when a shared persistent database is not configured.
+*   **Implementation**: Instruct the agent to customize the `message` field in the action context of buttons (e.g., `"Search for providers for my PPO plan."`) to explicitly include the state variables. This forces the client to store the state and send it back to whatever replica handles the next turn, guaranteeing state continuity!
+
+### VertexAiSessionService Limitations
+*   **The Problem**: You might attempt to use `VertexAiSessionService` to solve the multi-replica state issue by persisting state in Vertex AI.
+*   **The Limitation**: `VertexAiSessionService` does **NOT** support user-provided session IDs when creating sessions (raises `ValueError: User-provided Session id is not supported`).
+*   **The Consequence**: If your custom `agent_executor.py` relies on mapping external task/context IDs to specific ADK session IDs, you cannot use `VertexAiSessionService` directly. You must either adapt your ID mapping strategy or fallback to `InMemorySessionService` combined with Transcript Echoing!
+
 ### Conversational UX & Flow (Avoid "Happy Path" Pitfalls)
 *   **Agent Greetings & Onboarding**: Any agent you build in A2UI should first introduce itself on invocation and clearly explain what it can do, rather than just displaying a standalone selection box or input field without context. Set clear expectations from the first turn.
 *   **Do Not Force Tightly-Coupled Flows**: Avoid encoding strict "happy path" funnels or chained tool executions in the system prompt (e.g., "Once Action A is complete, immediately perform Action B"). Always explicitly configure the agent to *ask* the user for their preference before automatically branching into optional workflows.
@@ -307,6 +328,9 @@ When deploying to environments like Gemini Enterprise, the frontend strictly enf
 8.  **The Array-vs-Object Wrapper Pitfall (Top-Level)**: The A2UI payload returned by the agent MUST be a JSON object with a top-level `"a2ui_messages"` key.
     -   **CORRECT**: `{ "a2ui_messages": [ ... ] }`
     -   **INCORRECT**: `[ ... ]` (Returning a raw array fails parsing!).
+    -   **Consistency Rule**: Ensure all few-shot examples provided in the system prompt or external files (like `a2ui_examples.py`) use this object wrapper instead of raw arrays, so the LLM learns the correct top-level structure.
+    -   **Executor Adaptation**: If using a custom executor (like `agent_executor.py`) to intercept the stream, ensure it can parse both formats (lists and wrapped objects) and unwraps the `a2ui_messages` list to yield individual messages as separate `DataPart`s if that's what the client expects.
+
 9.  **The Python f-string Escaping Trap**: When using Python f-strings to define prompts that contain inline JSON examples, literal curly braces `{}` MUST be escaped as `{{}}`. Failure to do so triggers `SyntaxError: Expression nested too deeply`.
 10. **Deployment Pack Completeness (extra_packages)**: When deploying via the Python SDK (Pickle-based), if your agent imports local helper modules (e.g., `a2ui_examples.py`, `a2ui_schema.py`), you MUST add them to the `extra_packages` list in your deployment script. Unlisted files will not be uploaded to the server, causing `ModuleNotFoundError` at runtime.
 
@@ -386,6 +410,37 @@ try:
         a2a_module.__dict__["ServerCallContext"] = adapter_module.ServerCallContext
 except ImportError:
     pass
+```
+
+### Protobuf `KeyError: 'serialized'` on Python 3.13
+**Symptom**: Server crashes on startup in remote Agent Engine environment with `KeyError: 'serialized'` in `google/protobuf/message.py` during `cloudpickle.loads`.
+**Cause**: Protocol Buffer objects rely on C-extensions and do not always pickle/unpickle reliably across different environment versions on Python 3.13.
+**Fix**: Apply a monkey-patch to `Message.__setstate__` at the very top of your `agent_executor.py` (or entry point file) to handle the missing key gracefully:
+
+```python
+try:
+    from google.protobuf.message import Message
+    original_setstate = Message.__setstate__
+    def patched_setstate(self, state):
+        if 'serialized' not in state:
+             state['serialized'] = b''
+        return original_setstate(self, state)
+    Message.__setstate__ = patched_setstate
+except Exception as e:
+    pass
+```
+
+### Dependency Parity (Local vs Remote)
+**Lesson**: When deploying via the Python SDK (Pickle-based), the local environment's package versions are captured in the pickle. If the remote environment installs different versions (due to unpinned requirements), unpickling failures like `KeyError: 'serialized'` are highly likely.
+**Action**: 
+1. Pin all key dependencies in `deploy_ae.py` to match known working versions (e.g., from a reference `uv.lock` or GCS bucket).
+2. Ensure your local environment matches these pinned versions before running the deployment script.
+3. Add a local requirements check in your deployment script to warn about mismatches.
+
+### Git Dependency Naming
+**Lesson**: When pulling `a2ui-agent` from git in requirements, use the correct metadata name `a2ui-agent-sdk` to avoid build resolution failures:
+```text
+a2ui-agent-sdk @ git+https://github.com/google/A2UI.git#subdirectory=agent_sdks/python
 ```
 
 ## 12. Reference Code & Samples

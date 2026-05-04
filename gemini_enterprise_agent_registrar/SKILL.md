@@ -138,6 +138,9 @@ curl -X POST \
 #### B.2 Vertex Agent Engine A2A Agent (A2UI capable)
 When deploying A2UI agents to Vertex Agent Engine using Pickle, you MUST register them as A2A agents (`a2aAgentDefinition`), NOT standard ADK agents. 
 
+> [!CAUTION]
+> **Hard Requirement for Authorization**: A2A agents hosted on Vertex AI Agent Engine *require* an Authorization resource with `cloud-platform` scope to be callable by Gemini Enterprise, even if the agent itself does not access external resources. You MUST create this resource (see Phase 2) and include it in the registration payload.
+
 1. **Generate Card Locally**: Use `create_agent_card` and serialize to JSON (with `exclude_none=True` to avoid server rejection of null values).
 2. **Add A2UI Extensions**: Merge the `capabilities.extensions` block for A2UI.
 3. **URL Setting**: The `url` should point to the Vertex AI A2A endpoint base (Gemini Enterprise will append `/v1/message:send` automatically): `https://\${ENDPOINT_LOCATION}-aiplatform.googleapis.com/v1beta1/projects/\${PROJECT_ID}/locations/\${ENDPOINT_LOCATION}/reasoningEngines/\${REASONING_ENGINE_ID}/a2a`.
