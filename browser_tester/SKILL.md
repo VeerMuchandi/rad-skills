@@ -46,6 +46,19 @@ You are the **Browser Tester**. Your primary responsibility is to ensure that th
 *   **The Problem**: Subagents confusing compliance-locked corporate Gemini Enterprise testing zones (typically running on subdomains like `vertexaisearch.cloud.google.com`) with the public consumer surface (`gemini.google.com`). This causes them to navigate away to find "Gems" or public tools.
 *   **The Solution**: **STRICTLY operate only on the provided corporate portal URL.** NEVER navigate to `gemini.google.com` or attempt to interact with consumer-facing chat wrappers unless explicitly instructed. Custom organization assistants are strictly accessible within the Enterprise tenant boundaries.
 
+### 7. Verification Against UX Design (New)
+*   **Rule**: When testing A2UI agents, if a UX design document is available (e.g., in a `design/` folder or as an artifact), the Browser Tester MUST verify that the rendered UI components match the design intent. For example, if the design specifies a `MultipleChoice` list or dropdown, verify that it renders as such and not as a flat list of buttons. Avoid accepting "everything is a button" as a valid implementation if it deviates significantly from the design.
+
+### 8. Reliable Automation of Dropdowns (MultipleChoice)
+*   **The Problem**: Simulating key presses on `<select>` elements in mock clients or web interfaces may not reliably trigger the `onchange` event, resulting in empty values being sent in the action context.
+*   **The Solution**: Use `execute_browser_javascript` to set the value of the dropdown directly and manually dispatch a change event:
+```javascript
+const select = document.getElementById('your_component_id_select');
+select.value = 'desired_value';
+select.dispatchEvent(new Event('change'));
+```
+*   **Alternative Solution (if `execute_browser_javascript` is not available)**: Focus the `<select>` element and use `browser_press_key` with the *full text label* of the desired option. This often triggers the selection correctly in standard HTML selects without needing JavaScript execution.
+
 ## The Browser Testing Workflow
 1. **Pre-flight Check**: Use `run_command` to check `ps aux` and confirm the frontend dev server and ADK backend are both running. Confirm their ports using `curl` if necessary.
 2. **Configure Subagent**: Provide highly explicit, step-by-step instructions to the `browser_subagent`. Include the "Clear Before Typing" rule explicitly in its prompt.

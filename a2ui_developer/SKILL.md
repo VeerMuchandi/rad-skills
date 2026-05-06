@@ -177,10 +177,10 @@ For Agent Engine, you **must use the text-based delimiter fallbacks** (`---JSON_
 
 
 ### 4.C. Python Dependencies
-For A2UI agents deployed on Agent Engine using the Python SDK, you MUST include the `a2ui-agent` SDK from the git repository in your `requirements.txt`. Removing it will break A2A communication and cause `400 Bad Request` errors.
+For A2UI agents deployed on Agent Engine using the Python SDK, you MUST include the `a2ui-agent-sdk` SDK from the git repository in your `requirements.txt` and in the `config["requirements"]` list of your deployment script. Removing it will break A2A communication and cause `400 Bad Request` errors.
 
 ```text
-a2ui-agent @ git+https://github.com/google/A2UI.git#subdirectory=agent_sdks/python
+a2ui-agent-sdk @ git+https://github.com/google/A2UI.git#subdirectory=agent_sdks/python
 ```
 
 > [!IMPORTANT]
@@ -285,7 +285,32 @@ Refer to the `Agent Engine Python Deployer` skill for instructions on how to pac
 When deploying A2UI agents to Gemini Enterprise and using rich UI components (like buttons or forms), be aware of how user inputs are delivered to the backend:
 *   **The Problem**: Clicking a button in the UI often sends a generic text message like `"User action triggered."` as the primary user input. Relying solely on `context.get_user_input()` will cause the agent to receive this generic string and lose context, leading to loops or resets.
 *   **The Solution**: The actual data payload (including the `context` defined in the button action) is delivered in a separate **`DataPart`** of the message with mimeType `application/json+a2ui`.
-*   **Implementation**: In your custom `agent_executor.py`, you MUST iterate through the `parts` of the incoming message, look for the `DataPart` containing `userAction`, and extract the specific message or parameters from it to override or augment the query before passing it to the agent!
+*   **Implementation Pattern (Custom Executor)**: In your custom `agent_executor.py`, you MUST iterate through the `parts` of the incoming message, look for the `DataPart` containing `userAction`, and extract the specific message or parameters from it to override or augment the query before passing it to the agent!
+
+```python
+    # Example extraction logic in execute() method
+    try:
+        if hasattr(context, 'message') and context.message and hasattr(context.message, 'parts'):
+            for part in context.message.parts:
+                if hasattr(part, 'root') and hasattr(part.root, 'data'):
+                    data_part = part.root
+                    if hasattr(data_part, 'metadata') and data_part.metadata and data_part.metadata.get('mimeType') == 'application/json+a2ui':
+                        data = data_part.data
+                        if 'userAction' in data:
+                            user_action = data['userAction']
+                            if 'context' in user_action:
+                                action_context = user_action['context']
+                                if 'message' in action_context:
+                                    query = action_context['message'] # Override query
+                                    
+                                # Save other context to session state
+                                for k, v in action_context.items():
+                                    if k != 'message':
+                                        session.state[k] = v
+    except Exception as e:
+        logger.warning("Failed to extract action context: %s", e)
+```
+
 
 ### TrustedHTML Errors as Red Herrings
 *   **The Problem**: You may see `TrustedHTML` CSP policy errors in the browser console when A2UI components fail to render. This can easily be mistaken for a component schema or sanitization issue.
@@ -296,6 +321,18 @@ When deploying A2UI agents to Gemini Enterprise and using rich UI components (li
 *   **The Problem**: In multi-replica environments like Gemini Enterprise, relying on ADK's in-memory `session.state` to preserve user choices (like plan type) across turns can fail. If Turn 2 hits a different replica than Turn 1, the in-memory state is lost, causing the agent to loop back and ask for the information again.
 *   **The Solution**: Use **Visible Transcript Echoing** as a fallback or primary mechanism when a shared persistent database is not configured.
 *   **Implementation**: Instruct the agent to customize the `message` field in the action context of buttons (e.g., `"Search for providers for my PPO plan."`) to explicitly include the state variables. This forces the client to store the state and send it back to whatever replica handles the next turn, guaranteeing state continuity!
+
+### State Injection Pattern for Multi-Replica Continuity
+*   **The Problem**: Ephemeral session state is often lost in multi-replica environments when sequential turns hit different replicas.
+*   **The Solution**: Inject the extracted session state directly into the query string before passing it to the agent. This ensures that the agent always sees the accumulated context in the transcript, effectively using "Transcript Echoing" at the system level.
+*   **Implementation Pattern**:
+```python
+    # Inject session state into query
+    state_vars = [f"{k}={v}" for k, v in session.state.items()]
+    if state_vars:
+        query = f"{query} [State: {', '.join(state_vars)}]"
+        logger.warning("[DEBUG] Appended state to query: %s", query)
+```
 
 ### VertexAiSessionService Limitations
 *   **The Problem**: You might attempt to use `VertexAiSessionService` to solve the multi-replica state issue by persisting state in Vertex AI.
@@ -433,9 +470,10 @@ except Exception as e:
 ### Dependency Parity (Local vs Remote)
 **Lesson**: When deploying via the Python SDK (Pickle-based), the local environment's package versions are captured in the pickle. If the remote environment installs different versions (due to unpinned requirements), unpickling failures like `KeyError: 'serialized'` are highly likely.
 **Action**: 
-1. Pin all key dependencies in `deploy_ae.py` to match known working versions (e.g., from a reference `uv.lock` or GCS bucket).
-2. Ensure your local environment matches these pinned versions before running the deployment script.
-3. Add a local requirements check in your deployment script to warn about mismatches.
+1. Pin all key dependencies in `deploy_sdk.py` (or `deploy_ae.py`) to match known working versions (e.g., from a reference working file).
+2. **CRITICAL**: Ensure you include `"a2ui-agent-sdk @ git+https://github.com/google/A2UI.git#subdirectory=agent_sdks/python"` in the `requirements` list of the `config` dictionary passed to `client.agent_engines.create`.
+3. Ensure your local environment matches these pinned versions before running the deployment script.
+4. Add a local requirements check in your deployment script to warn about mismatches.
 
 ### Git Dependency Naming
 **Lesson**: When pulling `a2ui-agent` from git in requirements, use the correct metadata name `a2ui-agent-sdk` to avoid build resolution failures:
