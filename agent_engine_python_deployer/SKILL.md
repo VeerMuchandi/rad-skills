@@ -245,6 +245,7 @@ To prevent persistent 400 Bad Request or connection hang loops when deploying A2
 -   ⚠️ **Avoid Custom Intercept Bloat**: Do not inject complex container-loop safety overrides or unverified monkey-patches unless parity match with working references demanded it. Favor the simple, canonical `client.agent_engines.create()` workflow.
 -   ⚠️ **The URL Suffix Trap**: When patching or creating `DiscoveryEngine` Agent platform registrations, the `a2aAgentDefinition.jsonAgentCard.url` must point to the base endpoint (e.g., `.../a2a`) **WITHOUT** a trailing `/v1`. Gemini Enterprise automatically appends `/v1/message:send` to the registered URL. Double suffixes (e.g., `/v1/v1/message:send`) will trigger silent 400 routing drops.
 -   ⚠️ **The `env_vars` spelling rule**: When constructing GenAI `config` envelopes, pass container environment variables under the spec-validated **`env_vars`** key. Passing `environment_variables` triggers Pydantic Extra Inputs validation drop.
+-   ⚠️ **Always Enable Telemetry**: Ensure `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY` and `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` are set to `true` in `env_vars` to enable proper logging and debugging in Vertex AI.
 
 ## 6. Golden Unified `deploy_sdk.py` Template
 
@@ -306,3 +307,24 @@ def main():
 if __name__ == "__main__":
     main()
 ```
+
+## 7. Working Dependencies for A2UI Agents
+
+When deploying A2UI agents to Vertex AI Agent Engine, you may encounter `KeyError: 'serialized'` errors during unpickling in the container if there is a version mismatch for `protobuf` or `cloudpickle`.
+
+The following specific combination of dependency versions has been verified to work successfully for A2UI agents:
+
+```python
+        "requirements": [
+            "google-adk==1.28.1",
+            "google-cloud-aiplatform[agent_engines,adk]==1.143.0",
+            "a2a-sdk==0.3.25",
+            "pydantic==2.12.5",
+            "cloudpickle==3.1.2",
+            "protobuf==6.33.6",
+            "jsonschema==4.26.0",
+            "a2ui-agent-sdk @ git+https://github.com/google/A2UI.git#subdirectory=agent_sdks/python",
+        ],
+```
+
+Ensure you use these exact versions in your `deploy_ae.py` script if you encounter unpickling errors related to protobuf.
