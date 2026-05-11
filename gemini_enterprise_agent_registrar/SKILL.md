@@ -86,8 +86,8 @@ curl -X POST \
 ## Phase 3: Register the Agent
 Generate the formal registration `curl` command based on the selected agent type. 
 
-**CRITICAL NOTE on `tool_authorizations`**:
-If an Authorization resource was created, the `tool_authorizations` array MUST use the `PROJECT_NUMBER`, not the `PROJECT_ID`. Do not use `projects/${PROJECT_ID}/...` inside this array.
+**CRITICAL NOTE on `toolAuthorizations`**:
+If an Authorization resource was created for a Reasoning Engine agent, it MUST be specified as an array named `toolAuthorizations` inside `authorizationConfig`. The array MUST use the `PROJECT_NUMBER`, not the `PROJECT_ID`.
 
 ### Option A: Reasoning Engine Agent
 ```bash
@@ -106,7 +106,9 @@ curl -X POST \
     }
     // ONLY INCLUDE THIS BLOCK IF OAUTH WAS REQUIRED:
     // , "authorizationConfig": {
-    //   "agentAuthorization": "projects/${PROJECT_NUMBER}/locations/${ENDPOINT_LOCATION}/authorizations/${AUTH_ID}"
+    //   "toolAuthorizations": [
+    //     "projects/${PROJECT_NUMBER}/locations/${ENDPOINT_LOCATION}/authorizations/${AUTH_ID}"
+    //   ]
     // }
     // ONLY INCLUDE IF EXPLICIT SHARING WAS REQUESTED (ALL_USERS or RESTRICTED):
     // , "sharingConfig": {

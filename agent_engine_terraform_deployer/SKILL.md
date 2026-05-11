@@ -144,6 +144,11 @@ Use this to deploy code from a remote repository.
 **The Issue**: Agent Engine creation fails (Error Code 3) if the service account roles haven't finished propagating.
 **The Solution**: The CFF module includes a `time_sleep`. If you encounter "Error code 3" on the first run, simply retry `terraform apply` after a few minutes.
 
+### F. Reserved Environment Variables
+**The Issue**: Trying to set environment variables like `GOOGLE_CLOUD_PROJECT` manually in the `environment_variables` block of the reasoning engine configuration will fail with a `400 Bad Request` error stating that the variable name is reserved.
+**The Solution**: Do not set `GOOGLE_CLOUD_PROJECT` manually. Agent Engine sets `PROJECT_ID` and `LOCATION` automatically. Update your agent code to fall back to these variables when running in the Agent Engine environment (e.g., `os.getenv("PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")`).
+
+
 ## 5. A2A Authorization Resource (Gemini Enterprise)
 
 When deploying A2A agents that require OAuth (like A2UI), you must create an `AGENT_AUTHORIZATION` resource in Gemini Enterprise.

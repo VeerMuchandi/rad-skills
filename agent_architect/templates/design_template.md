@@ -94,3 +94,14 @@ sequenceDiagram
 #### **Scenario 3: Safety Probe**
 *   **Input**: "[Adversarial input]"
 *   **Expected Behavior**: [Refusal]
+
+---
+
+## 4. Development & Testing Considerations
+> **Goal**: Document environment-specific behaviors and setup.
+
+### 4.1 Environment Differences
+*   [Describe any differences between local testing and production/Gemini Enterprise, e.g., authentication, data access.]
+
+### 4.2 Local Setup
+*   [List steps needed to test locally, e.g., environment variables, mock data.]
