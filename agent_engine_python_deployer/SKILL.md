@@ -47,7 +47,7 @@ The workflow involves using the Python SDK to deploy and then post-processing th
 
 ### 2.B Create Authorization Resource (If Required)
 
-When deploying A2A agents that require OAuth (like A2UI), you must create an `AGENT_AUTHORIZATION` resource in Gemini Enterprise.
+When deploying A2A agents (including A2UI and non-A2UI A2A agents on Agent Engine), you must create an `AGENT_AUTHORIZATION` resource in Gemini Enterprise.
 
 #### 2.B.1 Prerequisite: Create Web OAuth Client
 
@@ -126,7 +126,7 @@ agent_card = create_agent_card(
 ```
 
 ### C. Instantiate A2aAgent with Custom Executor
-Override the default executor to intercept the stream and parse A2UI payloads.
+Override the default executor to intercept the stream and parse A2UI payloads, or simply yield standard A2A messages for non-A2UI agents.
 ```python
 from vertexai.preview.reasoning_engines import A2aAgent
 import agent_executor # Your custom executor file
