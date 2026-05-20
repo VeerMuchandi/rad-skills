@@ -82,6 +82,11 @@ Tells the client to start drawing a specific root component on a surface.
 
 ## 3. Developing A2UI Agents
 
+### Mandatory Workflow & Isolation Rules
+1. **Separate Folder**: Always create a separate folder for the A2UI implementation (e.g., `[agent_name]_a2ui`). **NEVER** modify the original reference agent code in place.
+2. **Test Locally First**: You **MUST** generate the code and test it locally using the `A2UI Local Tester` skill before attempting any deployment.
+3. **Deploy Only on Request**: Do **NOT** deploy to Agent Engine or Gemini Enterprise unless the user explicitly asks you to do so, and only after the agent works locally and the user is happy with it.
+
 ### Choosing your Deployment Target (Cloud Run vs Vertex AI Agent Engine)
 **CRITICAL IF UNKNOWN**: Before writing any integration code, you must ask the user:
 > "Are you deploying this A2UI agent to Cloud Run (Raw HTTP/A2A Mode) or natively to Vertex AI Agent Engine (Native Tools Mode)?"
@@ -379,10 +384,12 @@ When deploying to environments like Gemini Enterprise, the frontend strictly enf
     -   **CORRECT**: `{ "a2ui_messages": [ ... ] }`
     -   **INCORRECT**: `[ ... ]` (Returning a raw array fails parsing!).
     -   **Consistency Rule**: Ensure all few-shot examples provided in the system prompt or external files (like `a2ui_examples.py`) use this object wrapper instead of raw arrays, so the LLM learns the correct top-level structure.
-    -   **Executor Adaptation**: If using a custom executor (like `agent_executor.py`) to intercept the stream, ensure it can parse both formats (lists and wrapped objects) and unwraps the `a2ui_messages` list to yield individual messages as separate `DataPart`s if that's what the client expects.
+    -   **Executor Adaptation (CRITICAL for Gemini Enterprise)**: When using a custom executor (like `agent_executor.py`) to deliver A2UI payloads, you MUST extract the list of messages from the top-level `"a2ui_messages"` object and send **each message as a separate `DataPart`** with `mimeType="application/json+a2ui"`. Sending the entire wrapped object in a single part will cause rendering failures (like raw JSON display or blank responses) in the platform client.
 
-9.  **The Python f-string Escaping Trap**: When using Python f-strings to define prompts that contain inline JSON examples, literal curly braces `{}` MUST be escaped as `{{}}`. Failure to do so triggers `SyntaxError: Expression nested too deeply`.
-10. **Deployment Pack Completeness (extra_packages)**: When deploying via the Python SDK (Pickle-based), if your agent imports local helper modules (e.g., `a2ui_examples.py`, `a2ui_schema.py`), you MUST add them to the `extra_packages` list in your deployment script. Unlisted files will not be uploaded to the server, causing `ModuleNotFoundError` at runtime.
+9.  **Message Order Sensitivity (CRITICAL)**: When sending multiple A2UI instructions in the same response (e.g., `beginRendering` and `surfaceUpdate`), ensure that **`beginRendering` appears FIRST** in the list of messages. The platform client renderer may fail to process updates if it doesn't know the root container target first!
+10. **The Python f-string Escaping Trap**: When using Python f-strings to define prompts that contain inline JSON examples, literal curly braces `{}` MUST be escaped as `{{}}`. Failure to do so triggers `SyntaxError: Expression nested too deeply`.
+11. **Deployment Pack Completeness (extra_packages)**: When deploying via the Python SDK (Pickle-based), if your agent imports local helper modules (e.g., `a2ui_examples.py`, `a2ui_schema.py`), you MUST add them to the `extra_packages` list in your deployment script. Unlisted files will not be uploaded to the server, causing `ModuleNotFoundError` at runtime.
+12. **`usageHint` Schema Strictness**: Gemini Enterprise strictly enforces the `usageHint` enum values (e.g., `"icon"`, `"avatar"`, `"header"`). Using unsupported values like `"body"`, `"caption"`, or `"h4"` (even if seen in some examples) can cause silent rendering failures, displaying raw JSON instead. When in doubt, omit `usageHint` or stick to the official enum list.
 
 ### 11. Volatile Memory & Visible Context Echoing
 *   **The Problem**: Scaled serverless fleets (like Vertex AI Agent Engine) often use ephemeral in-memory session persistence. Standard load balancers bounce sequential turns across different container workers. If Turn 1 saves a dynamic entity ID in Replica A's RAM, a subsequent A2UI action click might hit Replica B (which has empty RAM), losing the context and forcing an unwelcome conversation reset.

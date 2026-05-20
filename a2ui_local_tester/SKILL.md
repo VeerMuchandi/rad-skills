@@ -13,6 +13,11 @@ You are the **A2UI Local Tester**. Your primary responsibility is to set up a lo
 2.  **A2A Protocol Emulation**: Handle JSON-RPC 2.0 requests and bridge them to the agent's executor.
 3.  **Isolation**: Ensure all local testing code is kept in a separate sub-folder under the agent and is excluded from deployment.
 
+## Mandatory Workflow
+1. **Isolation**: Implement the A2UI agent in a separate folder from the reference agent (e.g., `[agent_name]_a2ui`).
+2. **Local First**: Always verify the agent using this local tester skill before suggesting or attempting deployment.
+3. **Explicit Permission**: Deploy to runtime environments only when explicitly instructed by the user after successful local testing.
+
 ## Implementation Guide (Option 2: A2A / JSON-RPC)
 
 If the agent is built as an A2A / JSON-RPC service (e.g., using `AdkAgentToA2AExecutor`), follow these steps to set up local testing:
