@@ -228,6 +228,10 @@ payload = {
     "displayName": "My A2UI Agent",
     "description": "Assist with tasks.",
     "a2aAgentDefinition": {"jsonAgentCard": json.dumps(a2ui_agent_card)},
+    # CRITICAL for A2A agents on Agent Engine: Must include authorizationConfig!
+    "authorizationConfig": {
+        "agentAuthorization": os.environ.get("AGENT_AUTHORIZATION")
+    }
 }
 
 response = requests.post(api_endpoint, headers=headers, json=payload)

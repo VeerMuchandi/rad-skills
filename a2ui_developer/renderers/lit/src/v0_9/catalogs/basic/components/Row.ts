@@ -14,17 +14,57 @@
  * limitations under the License.
  */
 
-import { html, nothing } from "lit";
-import { customElement } from "lit/decorators.js";
-import { map } from "lit/directives/map.js";
-import { styleMap } from "lit/directives/style-map.js";
-import { RowApi } from "@a2ui/web_core/v0_9/basic_catalog";
-import { A2uiLitElement, A2uiController } from "@a2ui/lit/v0_9";
+import {html, nothing, css, PropertyValues} from 'lit';
+import {customElement} from 'lit/decorators.js';
+import {map} from 'lit/directives/map.js';
+import {RowApi} from '@a2ui/web_core/v0_9/basic_catalog';
+import {BasicCatalogA2uiLitElement} from '../basic-catalog-a2ui-lit-element.js';
+import {A2uiController} from '@a2ui/lit/v0_9';
 
-@customElement("a2ui-basic-row")
-export class A2uiBasicRowElement extends A2uiLitElement<typeof RowApi> {
+const JUSTIFY_MAP: Record<string, string> = {
+  start: 'flex-start',
+  center: 'center',
+  end: 'flex-end',
+  spaceBetween: 'space-between',
+  spaceAround: 'space-around',
+  spaceEvenly: 'space-evenly',
+  stretch: 'stretch',
+};
+
+const ALIGN_MAP: Record<string, string> = {
+  start: 'flex-start',
+  center: 'center',
+  end: 'flex-end',
+  stretch: 'stretch',
+};
+
+@customElement('a2ui-basic-row')
+export class A2uiBasicRowElement extends BasicCatalogA2uiLitElement<typeof RowApi> {
+  /**
+   * The styles of the row can be customized by redefining the following
+   * CSS variables:
+   *
+   * - `--a2ui-row-gap`: The gap between items in the row. Defaults to `--a2ui-spacing-m`.
+   */
+  static styles = css`
+    :host {
+      display: flex;
+      flex-direction: row;
+      gap: var(--a2ui-row-gap, var(--a2ui-spacing-m));
+    }
+  `;
+
   protected createController() {
     return new A2uiController(this, RowApi);
+  }
+
+  updated(changedProperties: PropertyValues) {
+    super.updated(changedProperties);
+    const props = this.controller.props;
+    if (props) {
+      this.style.justifyContent = JUSTIFY_MAP[props.justify ?? ''] ?? 'flex-start';
+      this.style.alignItems = ALIGN_MAP[props.align ?? ''] ?? 'stretch';
+    }
   }
 
   render() {
@@ -32,22 +72,12 @@ export class A2uiBasicRowElement extends A2uiLitElement<typeof RowApi> {
     if (!props) return nothing;
 
     const children = Array.isArray(props.children) ? props.children : [];
-    const styles = {
-      display: "flex",
-      flexDirection: "row",
-      flex: props.weight !== undefined ? String(props.weight) : "initial",
-      gap: "8px",
-    };
 
-    return html`
-      <div class="a2ui-row" style=${styleMap(styles as Record<string, string>)}>
-        ${map(children, (child: any) => html`${this.renderNode(child)}`)}
-      </div>
-    `;
+    return html` ${map(children, (child: any) => html`${this.renderNode(child)}`)} `;
   }
 }
 
 export const A2uiRow = {
   ...RowApi,
-  tagName: "a2ui-basic-row",
+  tagName: 'a2ui-basic-row',
 };

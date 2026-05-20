@@ -14,17 +14,13 @@
  * limitations under the License.
  */
 
-import { useMemo } from 'react';
-import { transpileToV0_8 } from '@/lib/transcoder';
-
-export interface ComponentInstance {
-  id: string;
-  component: Record<string, any>;
-}
+import {useMemo} from 'react';
+import {transpileToV0_8} from '@/lib/transcoder';
+import type {A2UIComponent} from '@/types/widget';
 
 export interface A2UISurfaceState {
   root: string;
-  components: ComponentInstance[];
+  components: A2UIComponent[];
   data: Record<string, any>;
 }
 
@@ -34,19 +30,19 @@ export interface A2UISurfaceState {
  */
 export function useA2UISurface(messages: any[]): A2UISurfaceState {
   return useMemo(() => {
-    let root = "root";
-    const componentsMap = new Map<string, ComponentInstance>();
+    let root = 'root';
+    const componentsMap = new Map<string, A2UIComponent>();
     let data: Record<string, any> = {};
 
     for (const msg of messages) {
       if (!msg) continue;
-      
+
       // Transpile v0.9 -> v0.8 (v0.8 passes through unchanged)
       const v0_8msg = transpileToV0_8(msg);
 
       // Handle beginRendering (v0.8)
       if (v0_8msg.beginRendering) {
-        root = v0_8msg.beginRendering.root || "root";
+        root = v0_8msg.beginRendering.root || 'root';
       }
 
       // Handle surfaceUpdate (v0.8) — components already in { id, component: { Type: props } } format
@@ -56,7 +52,7 @@ export function useA2UISurface(messages: any[]): A2UISurfaceState {
           if (comp.id && comp.component) {
             componentsMap.set(comp.id, {
               id: comp.id,
-              component: comp.component
+              component: comp.component,
             });
           }
         }
@@ -74,11 +70,11 @@ export function useA2UISurface(messages: any[]): A2UISurfaceState {
                 data[item.key] = extractValueMapValue(item);
               } else {
                 // Plain object
-                data = { ...data, ...item };
+                data = {...data, ...item};
               }
             }
           } else if (typeof contents === 'object') {
-            data = { ...data, ...contents };
+            data = {...data, ...contents};
           }
         }
       }

@@ -3,15 +3,17 @@
 This guide shows you how to serve **rich, interactive A2UI interfaces** from an **MCP server** using Tools and Embedded Resources. By the end, you'll have a working MCP server that returns A2UI components to any MCP-compatible client.
 
 <video width="100%" height="auto" controls playsinline style="display: block; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; margin-bottom: 24px;">
-  <source src="../assets/guides-a2ui-over-mcp-tour.mp4" type="video/mp4">
+  <source src="https://raw.githubusercontent.com/google/A2UI/main/docs/assets/guides-a2ui-over-mcp-tour.mp4" type="video/mp4">
   Your browser does not support the video tag.
 </video>
 
 ## Prerequisites
 
-- **Python 3.10+**
-- **[uv](https://docs.astral.sh/uv/)** — fast Python package manager
-- **Node.js 18+** (for the MCP Inspector)
+Ensure you have the following installed before you begin:
+
+- **Python** (version 3.10 or later).
+- **[uv](https://docs.astral.sh/uv/)** for fast Python package management.
+- **Node.js** (version 18 or later) for the MCP Inspector.
 
 ## Quick Start: Run the Sample
 
@@ -20,7 +22,7 @@ Before diving into the protocol details, let's get a working example running. Th
 ```bash
 # Clone the repo (if you haven't already)
 git clone https://github.com/google/A2UI.git
-cd A2UI/samples/agent/mcp/a2ui-over-mcp-recipe
+cd A2UI/samples/mcp/a2ui-over-mcp-recipe
 
 # Start the MCP server (SSE transport on port 8000)
 uv run .
@@ -39,14 +41,15 @@ In the Inspector:
 3. Click **List Tools** → you'll see `get_recipe_a2ui`
 4. Run the tool → the response contains A2UI JSON that renders a recipe card
 
-> ⚠️ **Note**
+> NOTE: Note
 >
 > The sample uses a local path reference to the A2UI Agent SDK. For your own projects, install from PyPI:
+>
 > ```bash
 > pip install a2ui-agent-sdk
 > ```
 
-See all samples at [`samples/agent/mcp/`](../../samples/agent/mcp).
+See all samples at [`samples/mcp/`](https://github.com/google/A2UI/tree/main/samples/mcp).
 
 ## How It Works
 
@@ -88,9 +91,7 @@ MCP is a stateful session protocol, so the most efficient approach is to declare
       "a2ui": {
         "clientCapabilities": {
           "v0.9": {
-            "supportedCatalogIds": [
-              "https://a2ui.org/specification/v0_9/basic_catalog.json"
-            ]
+            "supportedCatalogIds": ["https://a2ui.org/specification/v0_9/basic_catalog.json"]
           }
         }
       }
@@ -112,14 +113,12 @@ If your server must remain stateless, the client can pass A2UI capabilities in t
   "id": "id-123",
   "params": {
     "name": "generate_report",
-    "arguments": { "date": "2026-03-01" },
+    "arguments": {"date": "2026-03-01"},
     "_meta": {
       "a2ui": {
         "clientCapabilities": {
           "v0.9": {
-            "supportedCatalogIds": [
-              "https://a2ui.org/specification/v0_9/basic_catalog.json"
-            ],
+            "supportedCatalogIds": ["https://a2ui.org/specification/v0_9/basic_catalog.json"],
             "inlineCatalogs": []
           }
         }
@@ -187,7 +186,7 @@ def get_hello_world_ui():
     return types.CallToolResult(content=[text_content, a2ui_resource])
 ```
 
-> ⚠️ **Tip**
+> TIP: Tip
 >
 > Always include a `TextContent` alongside your A2UI resource. Clients that don't support A2UI will fall back to showing the text.
 
@@ -310,10 +309,10 @@ a2ui_resource = types.EmbeddedResource(
 )
 ```
 
-| Audience | Behavior |
-|----------|----------|
-| *(empty)* | Visible to both user and LLM |
-| `["user"]` | Rendered for the user; hidden from LLM context |
+| Audience        | Behavior                                               |
+| --------------- | ------------------------------------------------------ |
+| _(empty)_       | Visible to both user and LLM                           |
+| `["user"]`      | Rendered for the user; hidden from LLM context         |
 | `["assistant"]` | Available to LLM for follow-up reasoning; not rendered |
 
 ## Using the A2UI Agent SDK
@@ -325,7 +324,7 @@ pip install a2ui-agent-sdk
 ```
 
 ```python
-from a2ui.core.schema.manager import A2uiSchemaManager
+from a2ui.schema.manager import A2uiSchemaManager
 from a2ui.basic_catalog.provider import BasicCatalog
 
 # Initialize the schema manager with the basic catalog
@@ -344,5 +343,5 @@ See the full [Agent Development Guide](agent-development.md) for details on sche
 
 - [A2UI Specification](../specification/v0.9-a2ui.md) — full protocol reference
 - [Component Gallery](../reference/components.md) — browse available components
-- [MCP Apps in A2UI Surface](mcp-apps-in-a2ui-surface.md) — embed HTML-based MCP apps inside A2UI
+- [MCP Apps in A2UI Surface](mcp-apps-in-a2ui.md) — embed HTML-based MCP apps inside A2UI
 - [Client Setup](client-setup.md) — build a renderer that displays A2UI

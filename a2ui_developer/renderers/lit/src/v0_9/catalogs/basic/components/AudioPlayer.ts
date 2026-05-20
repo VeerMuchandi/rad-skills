@@ -14,15 +14,25 @@
  * limitations under the License.
  */
 
-import { html, nothing } from "lit";
-import { customElement } from "lit/decorators.js";
-import { AudioPlayerApi } from "@a2ui/web_core/v0_9/basic_catalog";
-import { A2uiLitElement, A2uiController } from "@a2ui/lit/v0_9";
+import {html, nothing, css} from 'lit';
+import {customElement} from 'lit/decorators.js';
+import {AudioPlayerApi} from '@a2ui/web_core/v0_9/basic_catalog';
+import {BasicCatalogA2uiLitElement} from '../basic-catalog-a2ui-lit-element.js';
+import {A2uiController} from '@a2ui/lit/v0_9';
 
-@customElement("a2ui-audioplayer")
-export class A2uiAudioPlayerElement extends A2uiLitElement<
-  typeof AudioPlayerApi
-> {
+@customElement('a2ui-audioplayer')
+export class A2uiAudioPlayerElement extends BasicCatalogA2uiLitElement<typeof AudioPlayerApi> {
+  static styles = css`
+    :host {
+      display: flex;
+      flex-direction: column;
+      gap: var(--a2ui-spacing-xs, 0.25rem);
+      background: var(--a2ui-audioplayer-background, transparent);
+      border-radius: var(--a2ui-audioplayer-border-radius, 0);
+      padding: var(--a2ui-audioplayer-padding, 0);
+    }
+  `;
+
   protected createController() {
     return new A2uiController(this, AudioPlayerApi);
   }
@@ -31,14 +41,14 @@ export class A2uiAudioPlayerElement extends A2uiLitElement<
     const props = this.controller.props;
     if (!props) return nothing;
 
-    return html`<div class="a2ui-audioplayer">
+    return html`
       ${props.description ? html`<p>${props.description}</p>` : nothing}
       <audio src=${props.url} controls></audio>
-    </div>`;
+    `;
   }
 }
 
 export const A2uiAudioPlayer = {
   ...AudioPlayerApi,
-  tagName: "a2ui-audioplayer",
+  tagName: 'a2ui-audioplayer',
 };

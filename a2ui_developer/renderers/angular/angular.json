@@ -41,6 +41,7 @@
           "options": {
             "browser": "a2ui_explorer/src/main.ts",
             "tsConfig": "a2ui_explorer/tsconfig.app.json",
+            "preserveSymlinks": false,
             "assets": [
               {
                 "glob": "**/*",
@@ -86,7 +87,11 @@
           "defaultConfiguration": "development"
         },
         "test": {
-          "builder": "@angular/build:unit-test"
+          "builder": "@angular/build:karma",
+          "options": {
+            "tsConfig": "a2ui_explorer/tsconfig.spec.json",
+            "karmaConfig": "karma.conf.js"
+          }
         }
       }
     }

@@ -311,6 +311,19 @@ When deploying A2UI agents to Gemini Enterprise and using rich UI components (li
         logger.warning("Failed to extract action context: %s", e)
 ```
 
+### Local Mock Testing of A2UI (Crucial for Rapid Prototyping)
+When building a custom local tester (e.g., using FastAPI and a standalone HTML file) to test A2UI agents before deployment, be aware of these common pitfalls:
+
+1.  **Button Actions Ignored**: If your mock client (`index.html`) hardcodes the check for action name (e.g., `if (action.name === 'submit')`), it will ignore buttons with custom action names like `submit_route_plan`.
+    *   **Solution**: Make the button handler generic in `index.html` to process *all* actions and send them to the server via `DataPart`.
+2.  **Time Picker rendered as Date Picker**: If your mock client uses `<input type="date">` blindly for `DateTimeInput`, it will ignore the `enableTime` property.
+    *   **Solution**: Check `enableDate` and `enableTime` properties in the A2UI component definition and set the input type to `time`, `date`, or `datetime-local` accordingly.
+3.  **Agent Ignoring Form Submissions**: When a button sends an action, the agent might not realize it has the data if it's just in the `DataPart` or state, and might re-render the form!
+    *   **Solution**: In your mock server, extract the `message` from the action context and **override** the query passed to the agent, rather than just appending it. This forces the agent to read the intent (e.g., "Plan my route with these details") as the primary user input!
+4.  **Strict Prompting for Form Triggering**: LLMs tend to fallback to text conversation instead of generating rich UI forms on the first turn.
+    *   **Solution**: Use strict negative constraints in the system prompt: *"You are FORBIDDEN from asking for [details] in text. You MUST call the [tool_name] tool to gather these details."*
+5.  **Bypassing Tools for Form Generation**: LLMs frequently fail to generate large valid JSON payloads in the stream.
+    *   **Solution**: Use the **Tool-Based Pattern** (Section 7) even for simple forms. Let a Python tool generate the JSON via `json.dumps` and return it, rather than letting the LLM type it out. This guarantees valid JSON delivery.
 
 ### TrustedHTML Errors as Red Herrings
 *   **The Problem**: You may see `TrustedHTML` CSP policy errors in the browser console when A2UI components fail to render. This can easily be mistaken for a component schema or sanitization issue.
@@ -531,3 +544,74 @@ A2UI_SCHEMA = r"""{
 ```
 > [!TIP]
 > Refer to the repository root `/usr/local/google/home/veermuchandi/code/agents/rad-workshop/careconnect_navigator_a2ui/a2ui_schema.py` for the full 300+ line JSON Schema string block ensuring v0.8 compliance.
+
+## 15. Mock Tester Template (FastAPI + HTML)
+
+Use this template to build a robust local tester for A2UI agents.
+
+### A. `server.py` (FastAPI)
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+import json
+
+app = FastAPI()
+
+@app.post("/jsonrpc")
+async def handle_jsonrpc(request: Request):
+    body = await request.json()
+    params = body.get("params", {})
+    message = params.get("message", {})
+    query = message.get("text", "")
+    parts = message.get("parts", [])
+    
+    # Extract userAction from DataPart
+    user_action = None
+    for part in parts:
+        if part.get("metadata", {}).get("mimeType") == "application/json+a2ui":
+            data = part.get("data")
+            if isinstance(data, dict) and 'userAction' in data:
+                user_action = data['userAction']
+                break
+                
+    # Process Action Context
+    state = {}
+    if user_action:
+        action_context = user_action.get('context', {})
+        for key, value in action_context.items():
+            state[key] = value
+            if key == 'message':
+                query = value  # Override query with message from context
+                
+    # Call your agent here...
+    # response = agent.run(query, state)
+    
+    # Return A2UI response...
+```
+
+### B. `index.html` (Client Snippets)
+
+```html
+<!-- Handle DateTimeInput -->
+if (comp.DateTimeInput) {
+    const input = document.createElement('input');
+    const dt = comp.DateTimeInput;
+    if (dt.enableDate === false && dt.enableTime === true) {
+        input.type = 'time';
+    } else if (dt.enableDate === true && dt.enableTime === false) {
+        input.type = 'date';
+    } else {
+        input.type = 'datetime-local';
+    }
+    ...
+}
+
+<!-- Handle Button Actions -->
+if (comp.Button.action) { // Generic handler
+    btn.onclick = () => {
+        const context = comp.Button.action.context || [];
+        // Extract data from model and send...
+    };
+}
+```

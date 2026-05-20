@@ -144,6 +144,8 @@ async def handle_jsonrpc(request: Request):
             action_context = user_action.get('context', {})
             for key, value in action_context.items():
                 state[key] = value
+                if key == 'message':
+                    query = value # Override query with message from context
             session.state = state # Update in-memory object
             
         # Append state to query to maintain context
@@ -501,7 +503,7 @@ Create `index.html` in the `local_tester` folder:
                     }
                 }
                 
-                if (comp.Button.action && comp.Button.action.name === 'submit') {
+                if (comp.Button.action) {
                     btn.onclick = () => {
                         const context = comp.Button.action.context || [];
                         const msgItem = context.find(i => i.key === 'message');
@@ -568,14 +570,21 @@ Create `index.html` in the `local_tester` folder:
 
             if (comp.DateTimeInput) {
                 const input = document.createElement('input');
-                input.type = 'date';
+                const dt = comp.DateTimeInput;
+                if (dt.enableDate === false && dt.enableTime === true) {
+                    input.type = 'time';
+                } else if (dt.enableDate === true && dt.enableTime === false) {
+                    input.type = 'date';
+                } else {
+                    input.type = 'datetime-local';
+                }
                 input.style.padding = '5px';
                 
                 if (comp.DateTimeInput.value && comp.DateTimeInput.value.path) {
                     const path = comp.DateTimeInput.value.path;
                     input.id = path + "_input";
                     input.value = dataModel[path] || "";
-                    input.onchange = (e) => {
+                    input.oninput = (e) => {
                         dataModel[path] = e.target.value;
                         console.log(`Updated data model: ${path} = ${e.target.value}`);
                     };
@@ -659,7 +668,7 @@ Create `index.html` in the `local_tester` folder:
                     const path = comp.TextField.text.path;
                     input.id = path + "_input";
                     input.value = dataModel[path] || "";
-                    input.onchange = (e) => {
+                    input.oninput = (e) => {
                         dataModel[path] = e.target.value;
                         console.log(`Updated data model: ${path} = ${e.target.value}`);
                     };
@@ -718,3 +727,10 @@ select.dispatchEvent(new Event('change'));
 *   **Symptom**: Local server returns `500 Internal Server Error` during a request.
 *   **Cause**: The underlying Gemini API might be returning `429 RESOURCE_EXHAUSTED` due to quota limits.
 *   **Action**: Check the server logs for the 429 traceback. Advise the user to retry later or check quota allocations.
+
+### 4. Key Mapping Mismatch (Slash vs No Slash)
+*   **The Problem**: Data paths in A2UI often start with a slash (e.g., `/start_address`). When the client sends these in the action context, it might strip the slash or use it as the key. If the server looks strictly for one format, it will fail to find the data.
+*   **The Solution**: Ensure the server state extraction and bypass logic are resilient by checking for both formats:
+```python
+start_addr = state.get("start_address") or state.get("/start_address")
+```

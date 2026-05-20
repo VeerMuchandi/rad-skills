@@ -13,84 +13,84 @@
       "components": [
         {
           "id": "root",
-          "component": "card",
+          "component": "Card",
           "child": "main-column"
         },
         {
           "id": "main-column",
-          "component": "column",
+          "component": "Column",
           "children": ["restaurant-image", "content"]
         },
         {
           "id": "restaurant-image",
-          "component": "image",
-          "url": { "path": "/image" },
+          "component": "Image",
+          "url": {"path": "/image"},
           "fit": "cover"
         },
         {
           "id": "content",
-          "component": "column",
+          "component": "Column",
           "children": ["name-row", "cuisine", "rating-row", "details-row"]
         },
         {
           "id": "name-row",
-          "component": "row",
+          "component": "Row",
           "children": ["restaurant-name", "price-range"],
           "justify": "spaceBetween",
           "align": "center"
         },
         {
           "id": "restaurant-name",
-          "component": "text",
-          "text": { "path": "/name" },
+          "component": "Text",
+          "text": {"path": "/name"},
           "weight": 700
         },
         {
           "id": "price-range",
-          "component": "text",
-          "text": { "path": "/priceRange" }
+          "component": "Text",
+          "text": {"path": "/priceRange"}
         },
         {
           "id": "cuisine",
-          "component": "text",
-          "text": { "path": "/cuisine" },
+          "component": "Text",
+          "text": {"path": "/cuisine"},
           "style": "italic"
         },
         {
           "id": "rating-row",
-          "component": "row",
+          "component": "Row",
           "children": ["star-icon", "rating", "reviews"],
           "align": "center"
         },
         {
           "id": "star-icon",
-          "component": "icon",
+          "component": "Icon",
           "name": "star"
         },
         {
           "id": "rating",
-          "component": "text",
-          "text": { "path": "/rating" }
+          "component": "Text",
+          "text": {"path": "/rating"}
         },
         {
           "id": "reviews",
-          "component": "text",
-          "text": { "path": "/reviewCount" }
+          "component": "Text",
+          "text": {"path": "/reviewCount"}
         },
         {
           "id": "details-row",
-          "component": "row",
+          "component": "Row",
           "children": ["distance", "delivery-time"]
         },
         {
           "id": "distance",
-          "component": "text",
-          "text": { "path": "/distance" }
+          "component": "Text",
+          "text": {"path": "/distance"}
         },
         {
           "id": "delivery-time",
-          "component": "text",
-          "text": { "path": "/deliveryTime" }
+          "component": "Text",
+          "text": {"path": "/deliveryTime"}
         }
       ]
     }
