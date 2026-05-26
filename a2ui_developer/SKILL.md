@@ -102,10 +102,12 @@ Agents must be explicitly instructed to generate A2UI JSON.
 **Critical Rules:**
 1.  **Delimiter**: Use `---a2ui_JSON---` to separate text from JSON.
 2.  **No Markdown**: Do NOT use \`\`\`json blocks for the A2UI payload.
-3.  **One Block**: Only one JSON payload per turn, at the end.
+3.  **Copy Exactly**: When using tools to generate UI strings, you MUST output the exact string returned by the tool, starting from `---a2ui_JSON---`.
+4.  **No Modification**: Do NOT summarize, truncate, or alter the JSON string in any way. Copy it character-for-character.
+5.  **One Block**: Only one JSON payload per turn, at the end.
 
 **Sample Instruction:**
-> You are an agent that generates UIs. You MUST separate your conversational response from your A2UI JSON output using the delimiter `---a2ui_JSON---`. The JSON must appear EXACTLY once at the end.
+> You are an agent that generates UIs. You MUST separate your conversational response from your A2UI JSON output using the delimiter `---a2ui_JSON---`. The JSON must appear EXACTLY once at the end. When calling a tool that returns UI JSON, you MUST copy the returned string exactly without modification or adding markdown code blocks.
 
 ## 4. Server-Side Implementation (Python ADK)
 
@@ -401,6 +403,11 @@ When deploying to environments like Gemini Enterprise, the frontend strictly enf
 10. **The Python f-string Escaping Trap**: When using Python f-strings to define prompts that contain inline JSON examples, literal curly braces `{}` MUST be escaped as `{{}}`. Failure to do so triggers `SyntaxError: Expression nested too deeply`.
 11. **Deployment Pack Completeness (extra_packages)**: When deploying via the Python SDK (Pickle-based), if your agent imports local helper modules (e.g., `a2ui_examples.py`, `a2ui_schema.py`), you MUST add them to the `extra_packages` list in your deployment script. Unlisted files will not be uploaded to the server, causing `ModuleNotFoundError` at runtime.
 12. **`usageHint` Schema Strictness**: Gemini Enterprise strictly enforces the `usageHint` enum values (e.g., `"icon"`, `"avatar"`, `"header"`). Using unsupported values like `"body"`, `"caption"`, or `"h4"` (even if seen in some examples) can cause silent rendering failures, displaying raw JSON instead. When in doubt, omit `usageHint` or stick to the official enum list.
+
+### Model Selection for A2UI
+*   **The Problem**: Smaller models like `gemini-2.5-flash` may occasionally fail to generate perfectly valid JSON payloads for complex UIs, or may truncate output due to token limits when prompt instructions are long.
+*   **The Solution**: For complex, multi-step A2UI workflows (e.g., shopping flows with forms, lists, and summaries), recommend using a more capable model like **`gemini-2.5-pro`**.
+*   **Verification**: In the Phone Plan Shopper case study, switching from `flash` to `pro` resolved persistent JSON truncation errors and allowed the workflow to complete successfully.
 
 ### 11. Volatile Memory & Visible Context Echoing
 *   **The Problem**: Scaled serverless fleets (like Vertex AI Agent Engine) often use ephemeral in-memory session persistence. Standard load balancers bounce sequential turns across different container workers. If Turn 1 saves a dynamic entity ID in Replica A's RAM, a subsequent A2UI action click might hit Replica B (which has empty RAM), losing the context and forcing an unwelcome conversation reset.
