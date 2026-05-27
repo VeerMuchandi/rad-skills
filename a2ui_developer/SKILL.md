@@ -86,6 +86,7 @@ Tells the client to start drawing a specific root component on a surface.
 1. **Separate Folder**: Always create a separate folder for the A2UI implementation (e.g., `[agent_name]_a2ui`). **NEVER** modify the original reference agent code in place.
 2. **Test Locally First**: You **MUST** generate the code and test it locally using the `A2UI Local Tester` skill before attempting any deployment.
 3. **Deploy Only on Request**: Do **NOT** deploy to Agent Engine or Gemini Enterprise unless the user explicitly asks you to do so, and only after the agent works locally and the user is happy with it.
+4. **Complete Working Examples**: When asked to generate an A2UI agent or a working example, you MUST generate the complete set of files required for it to function, including `agent.py`, `a2ui_examples.py`, `a2ui_schema.py`, and `a2ui_tools.py` (if using the tool-based pattern). Do not omit these supporting files unless the user explicitly says they are not needed.
 
 ### Choosing your Deployment Target (Cloud Run vs Vertex AI Agent Engine)
 **CRITICAL IF UNKNOWN**: Before writing any integration code, you must ask the user:
@@ -409,6 +410,15 @@ When deploying to environments like Gemini Enterprise, the frontend strictly enf
 *   **The Solution**: For complex, multi-step A2UI workflows (e.g., shopping flows with forms, lists, and summaries), recommend using a more capable model like **`gemini-2.5-pro`**.
 *   **Verification**: In the Phone Plan Shopper case study, switching from `flash` to `pro` resolved persistent JSON truncation errors and allowed the workflow to complete successfully.
 
+### Image Sizing and Usage Hints
+*   **The Problem**: A2UI does not support direct width/height properties for images in the schema. Developers must rely on `usageHint` and `fit` to guide the client renderer.
+*   **Guidance by Use Case**:
+    *   **Logos & List Thumbnails**: Use **`"smallFeature"`** or **`"mediumFeature"`** (e.g., for phone plan logos or device images in a list).
+    *   **Icons**: Use **`"icon"`** for small status indicators or UI controls.
+    *   **Profile Pictures**: Use **`"avatar"`** specifically for user/agent faces (often rendered circular).
+    *   **Banners**: Use **`"header"`** for large images at the top of a card.
+*   **Scaling**: Always consider the **`fit`** property (`contain`, `cover`, etc.) to ensure the image scales correctly within the area allocated by the client based on the hint.
+
 ### 11. Volatile Memory & Visible Context Echoing
 *   **The Problem**: Scaled serverless fleets (like Vertex AI Agent Engine) often use ephemeral in-memory session persistence. Standard load balancers bounce sequential turns across different container workers. If Turn 1 saves a dynamic entity ID in Replica A's RAM, a subsequent A2UI action click might hit Replica B (which has empty RAM), losing the context and forcing an unwelcome conversation reset.
 *   **The Solution**: **Force Context Persistence via Visible Transcript Echoing.** For all generated A2UI iterative lists (e.g. search result cards) or option toggles, always generate button `message` literals that explicitly append the target IDs inside the user-visible text string part (e.g. `I want to book Dr. Smith (id: p1).`). This guarantees that even if the server-side RAM cache flushes, the next replica reads the ID directly from the client-passed transcript body, enabling it to invoke continuity tool checks instantly!
@@ -521,6 +531,8 @@ a2ui-agent-sdk @ git+https://github.com/google/A2UI.git#subdirectory=agent_sdks/
 
 ## 12. Reference Code & Samples
 The workspace contains a comprehensive library of A2UI samples. **Always** prefer reading these verified implementations over generating code from scratch.
+
+For additional examples of agents that work with Gemini Enterprise, refer to: https://github.com/GCPartner/partner-reference-agents
 
 **Root Path**: `./examples` (Relative to this SKILL.md)
 
