@@ -109,6 +109,7 @@ Agents must be explicitly instructed to generate A2UI JSON.
 
 **Sample Instruction:**
 > You are an agent that generates UIs. You MUST separate your conversational response from your A2UI JSON output using the delimiter `---a2ui_JSON---`. The JSON must appear EXACTLY once at the end. When calling a tool that returns UI JSON, you MUST copy the returned string exactly without modification or adding markdown code blocks.
+> **Echo Constraint**: *"When a tool returns a string starting with '---a2ui_JSON---', you MUST include that exact string in your response without modification."*
 
 ## 4. Server-Side Implementation (Python ADK)
 
@@ -657,6 +658,9 @@ if (comp.Button.action) { // Generic handler
 
 This template handles session recovery, state injection, and robust A2UI output parsing.
 
+> [!NOTE]
+> A standalone version of this template is available at `templates/golden_agent_executor.py` within the skill directory.
+
 ```python
 import json, logging, re
 from a2a import types, utils
@@ -726,4 +730,27 @@ class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
 
     async def cancel(self, context, event_queue): pass
 ```
+
+## 17. Reasoning Engine Troubleshooting Bible
+
+This section summarizes critical fixes for issues encountered when deploying A2UI agents to Vertex AI Reasoning Engine.
+
+| Issue Category & Name | Log/Browser Signature 🔍 | Generic Root Cause 🧠 | The Reusable Solution 🛠️ |
+| :--- | :--- | :--- | :--- |
+| **Model Access Lockout (404)** | `404 Publisher Model ... was not found`. | The project/region has either deprecated the model or restricted it. | **Implementation**: Never assume a model is available. Create a standalone `troubleshoot_access.py` and run a "probe" across the frontier (e.g., `gemini-2.5-flash`, `gemini-3.1-flash`) to find the valid regional standard. |
+| **Input Form Loop** | Browser keeps showing the same input form again after submission. | Missing user action in few-shot examples. | **Architectural Patches**: 1. Add intent-specific **examples** to `AgentSkill` card. 2. Refine **System Instructions** with a numbered "Turn Sequence". |
+| **State Persistence Gap** | `NO STATE RECOVERED`. Model asks for data you just provided. | Statelessness of Reasoning Engine. | **The "Recovery Loop" Pattern**: In your executor's `execute()` method, recursively search for `userAction` objects in `context.message.parts` and inject their `inputs` back into the prompt as a `[State: key=val]` block. |
+| **Protocol UI rejection** | Browser says "Missing Card" or blank UI. | Malformed JSON or missing mimeType. | **A2UI v0.8 Compliance**: Ensure the executor wraps all JSON after `---a2ui_JSON---` into an `a2a.types.DataPart` with `metadata={"mimeType": "application/json+a2ui"}`. Use regex to strip conversational text. |
+| **Cloud Serialization Error** | `TASK_STATE_FAILED` or `PickleError`. | Protobuf unpickling issues. | **The Serialization Patch**: Add a monkey-patch to your deployment script that injects a `__setstate__` method into `google.protobuf.message.Message`. |
+| **Execution Context Flickering** | Permissions errors or "Project not found". | Loss of env vars. | **Forced Initialization**: Use the **numeric Project Number**. Call `aiplatform.init` and `vertexai.init` inside the `__init__` AND the `execute()` methods of your executor. |
+| **Chain-of-Thought Break** | Agent calls Turn 1 tools instead of Turn 2 tools. | Attention on text rather than state. | **Delimited Prompts**: Append state to query: `Actual User Text [State: param1=val|param2=val]`. Instruct model to prioritize `[State]` data. |
+| **Dependency Build Failure** | Deployment fails with "requirements not satisfied". | Version conflicts. | **Clean Build Strategy**: Avoid pinning `google-cloud-aiplatform` to a specific sub-version. Use `@ git+https://github.com/...` syntax for side-loaded SDKs. |
+| **Echo Behavior Failure** | Tool JSON is swallowed or double-wrapped. | Agent tries to be "helpful" by summarizing. | **Echo Constraint**: Add hard constraint: *"When a tool returns a string starting with '---a2ui_JSON---', you MUST include that exact string in your response without modification."* |
+
+### 🚀 Best Practice Deployment Workflow
+1. **Verify Model**: Run the probe script to confirm the target region supports the chosen Gemini version.
+2. **Patch Serialization**: Include the Protobuf monkey-patch by default in the `agent_executor.py`.
+3. **Harden Protocol**: Use a regex-based unwrapper for `---a2ui_JSON---` to ensure text and data are separated.
+4. **Inject State**: Always implement the recursive history crawler to ensure multi-turn continuity.
+5. **Use Numeric IDs**: Use Project Number and specified Location persistently in all `init` calls.
 

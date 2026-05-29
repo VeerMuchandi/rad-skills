@@ -241,6 +241,9 @@ response = requests.post(api_endpoint, headers=headers, json=payload)
 
 -   **Cloudpickle Version**: Ensure `cloudpickle` package versions match between your local environment and the deployment `requirements` to prevent unpickling errors.
 -   **Extra Packages Paths**: `extra_packages` should be relative to the running script's directory.
+-   **Model Access Lockout (404)**: If you see `404 Publisher Model ... was not found`, the region may not support the model. Create a standalone `troubleshoot_access.py` to probe valid models (e.g., `gemini-2.5-flash`, `gemini-3.1-flash`).
+-   **Dependency Build Failure**: Avoid pinning `google-cloud-aiplatform` to a specific sub-version in `requirements` to let the engine resolve the closest compatible version.
+-   **Forced Initialization**: To prevent "Project not found" errors, use the **numeric Project Number** and call `aiplatform.init` and `vertexai.init` inside the `__init__` and `execute()` methods of your custom executor.
 
 ## 5. Operational Lessons & Parity Discipline
 
@@ -254,6 +257,9 @@ To prevent persistent 400 Bad Request or connection hang loops when deploying A2
 ## 6. Golden Unified `deploy_sdk.py` Template
 
 Use this script to seamlessly toggle between fresh creation and inplace updates based on finding existing instances:
+
+> [!NOTE]
+> A standalone version of this template is available at `templates/golden_deploy_sdk.py` within the skill directory.
 
 ```python
 import os
@@ -342,6 +348,9 @@ To resolve **404/400 Routing Errors**, do not rely on static IP/URL registration
 ## 9. Golden Boilerplate: deploy_ae.py
 
 This template manages in-place updates and pinned dependency versions.
+
+> [!NOTE]
+> A standalone version of this template is available at `templates/golden_deploy_ae.py` within the skill directory.
 
 ```python
 import os, vertexai, json, requests
