@@ -252,7 +252,7 @@ To prevent persistent 400 Bad Request or connection hang loops when deploying A2
 -   ⚠️ **Avoid Custom Intercept Bloat**: Do not inject complex container-loop safety overrides or unverified monkey-patches unless parity match with working references demanded it. Favor the simple, canonical `client.agent_engines.create()` workflow.
 -   ⚠️ **The URL Suffix Trap**: When patching or creating `DiscoveryEngine` Agent platform registrations, the `a2aAgentDefinition.jsonAgentCard.url` must point to the base endpoint (e.g., `.../a2a`) **WITHOUT** a trailing `/v1`. Gemini Enterprise automatically appends `/v1/message:send` to the registered URL. Double suffixes (e.g., `/v1/v1/message:send`) will trigger silent 400 routing drops.
 -   ⚠️ **The `env_vars` spelling rule**: When constructing GenAI `config` envelopes, pass container environment variables under the spec-validated **`env_vars`** key. Passing `environment_variables` triggers Pydantic Extra Inputs validation drop.
--   ⚠️ **Always Enable Telemetry**: Ensure `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY` and `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` are set to `true` in `env_vars` to enable proper logging and debugging in Vertex AI.
+-   ⚠️ **Always Enable Telemetry**: Ensure `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY` and `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` are set to `true` in `env_vars` to enable proper logging and debugging in Vertex AI. *Note: If the sandboxed runtime environment restricts external network access to telemetry.googleapis.com, setting this to true will cause connection/SSLError crashes. In such environments, set it to false.*
 
 ## 6. Golden Unified `deploy_sdk.py` Template
 
@@ -356,6 +356,30 @@ This template manages in-place updates and pinned dependency versions.
 import os, vertexai, json, requests
 from vertexai.preview.reasoning_engines import A2aAgent
 from google.genai import types
+from google.protobuf import json_format
+
+# Monkey-patch json_format.MessageToJson and MessageToDict to handle Pydantic models (like AgentCard) correctly
+original_message_to_json = json_format.MessageToJson
+def patched_message_to_json(message, *args, **kwargs):
+    if hasattr(message, "model_dump_json"):
+        return message.model_dump_json()
+    elif hasattr(message, "json"):
+        return message.json()
+    elif isinstance(message, dict):
+        return json.dumps(message)
+    return original_message_to_json(message, *args, **kwargs)
+json_format.MessageToJson = patched_message_to_json
+
+original_message_to_dict = json_format.MessageToDict
+def patched_message_to_dict(message, *args, **kwargs):
+    if hasattr(message, "model_dump"):
+        return message.model_dump()
+    elif hasattr(message, "dict"):
+        return message.dict()
+    elif isinstance(message, dict):
+        return message
+    return original_message_to_dict(message, *args, **kwargs)
+json_format.MessageToDict = patched_message_to_dict
 
 # STABLE VERSIONS FOR PYTHON 3.13 / A2UI
 VERSIONS = [

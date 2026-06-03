@@ -192,6 +192,16 @@ async def handle_jsonrpc(request: Request):
         if text_part.strip():
             parts.append({"text": text_part.strip()})
             
+        # Load schema
+        schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_to_client_with_standard_catalog.json")
+        schema = None
+        if os.path.exists(schema_path):
+            try:
+                with open(schema_path, "r") as f:
+                    schema = json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load schema from {schema_path}: {e}")
+
         # Wrap A2UI messages in DataPart
         if isinstance(ui_data, list):
             messages = ui_data
@@ -201,6 +211,15 @@ async def handle_jsonrpc(request: Request):
             messages = [ui_data] if ui_data else []
             
         for msg in messages:
+            if schema:
+                try:
+                    import jsonschema
+                    jsonschema.validate(instance=msg, schema=schema)
+                    logger.info("A2UI payload message successfully validated against schema.")
+                except jsonschema.ValidationError as e:
+                    logger.critical(f"A2UI STRICT SCHEMA VALIDATION FAILED: {e.message}")
+                    logger.critical(f"Invalid Message: {json.dumps(msg, indent=2)}")
+                    raise ValueError(f"A2UI Schema Validation Error: {e.message}") from e
             parts.append({
                 "data": msg,
                 "metadata": {"mimeType": "application/json+a2ui"}
@@ -523,16 +542,29 @@ Create `index.html` in the `local_tester` folder:
                             context: {}
                         };
                         
-                        for (const item of context) {
-                            const key = item.key;
-                            const valObj = item.value;
-                            let val = "";
-                            if (valObj.literalString) {
-                                val = valObj.literalString;
-                            } else if (valObj.path) {
-                                val = dataModel[valObj.path] || "";
+                        if (comp.Button.action.context && comp.Button.action.context.length > 0) {
+                            for (const ctxItem of comp.Button.action.context) {
+                                const key = ctxItem.key;
+                                let val = undefined;
+                                if (ctxItem.value) {
+                                    if (ctxItem.value.literalString !== undefined) {
+                                        val = ctxItem.value.literalString;
+                                    } else if (ctxItem.value.path !== undefined) {
+                                        val = dataModel[ctxItem.value.path];
+                                    }
+                                }
+                                userAction.context[key] = val;
                             }
-                            userAction.context[key] = val;
+                        } else {
+                            // Grab values from inputs to context
+                            const inputFields = document.querySelectorAll('input, select');
+                            inputFields.forEach(field => {
+                                if (field.id) {
+                                    const path = "/" + field.id.replace("_input", "").replace("_select", "").replace("_checkbox", "").replace("_slider", "");
+                                    const cleanKey = field.id.replace("_input", "").replace("_select", "").replace("_checkbox", "").replace("_slider", "");
+                                    userAction.context[cleanKey] = dataModel[path] || field.value;
+                                }
+                            });
                         }
                         
                         sendUserAction(userAction, msgText);
@@ -692,6 +724,60 @@ Create `index.html` in the `local_tester` folder:
                 return img;
             }
             
+            if (comp.WebFrameUrl) {
+                const iframe = document.createElement('iframe');
+                const urlObj = comp.WebFrameUrl.url;
+                let srcUrl = "";
+                if (urlObj.literalString) {
+                    srcUrl = urlObj.literalString;
+                } else if (urlObj.path) {
+                    srcUrl = dataModel[urlObj.path] || "";
+                }
+                iframe.src = srcUrl;
+                iframe.width = "100%";
+                iframe.height = (comp.WebFrameUrl.height || 450) + "px";
+                iframe.style.border = "none";
+                iframe.style.borderRadius = "8px";
+                iframe.style.boxShadow = "0 1px 3px rgba(0,0,0,0.1)";
+                iframe.style.marginTop = "10px";
+                return iframe;
+            }
+            
+            if (comp.WebFrameSrcdoc) {
+                const iframe = document.createElement('iframe');
+                const srcdocObj = comp.WebFrameSrcdoc.srcdoc;
+                let srcdocHtml = "";
+                if (srcdocObj && srcdocObj.literalString) {
+                    srcdocHtml = srcdocObj.literalString;
+                } else if (srcdocObj && srcdocObj.path) {
+                    srcdocHtml = dataModel[srcdocObj.path] || "";
+                }
+                iframe.srcdoc = srcdocHtml;
+                iframe.width = "100%";
+                iframe.height = (comp.WebFrameSrcdoc.height || 400) + "px";
+                iframe.style.border = "none";
+                iframe.style.borderRadius = "8px";
+                iframe.style.boxShadow = "0 1px 3px rgba(0,0,0,0.1)";
+                iframe.style.marginTop = "10px";
+                return iframe;
+            }
+            
+            if (comp.Divider) {
+                const hr = document.createElement('hr');
+                hr.style.border = "none";
+                if (comp.Divider.axis === 'vertical') {
+                    hr.style.borderLeft = "1px solid #eef2f6";
+                    hr.style.height = "100%";
+                    hr.style.margin = "0 10px";
+                    hr.style.display = "inline-block";
+                } else {
+                    hr.style.borderTop = "1px solid #eef2f6";
+                    hr.style.width = "100%";
+                    hr.style.margin = "8px 0";
+                }
+                return hr;
+            }
+            
             const fallbackDiv = document.createElement('div');
             fallbackDiv.style.border = '1px dashed #ffc107';
             fallbackDiv.style.padding = '10px';
@@ -813,15 +899,28 @@ async def handle_jsonrpc(request: Request):
             logger.info(f"Polling Task {task_id}...")
             task_url = f"https://{LOCATION}-aiplatform.googleapis.com/v1beta1/projects/{PROJECT_ID}/locations/{LOCATION}/reasoningEngines/{ENGINE_ID}/a2a/v1/tasks/{task_id}"
             
-            for _ in range(30):
+            for _ in range(90):
                 time.sleep(2)
                 task_res = requests.get(task_url, headers=headers)
+                if task_res.status_code == 404:
+                    logger.warning("Task status returned 404 (not found). Syncing replica, retrying...")
+                    continue
                 if task_res.status_code == 200:
                     task_data = task_res.json()
                     state = task_data.get("status", {}).get("state")
                     
                     if state == "TASK_STATE_SUCCEEDED" or state == "TASK_STATE_COMPLETED":
                         artifacts = task_data.get("artifacts", [])
+                        # Load schema
+                        schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_to_client_with_standard_catalog.json")
+                        schema = None
+                        if os.path.exists(schema_path):
+                            try:
+                                with open(schema_path, "r") as f:
+                                    schema = json.load(f)
+                            except Exception as e:
+                                logger.error(f"Failed to load schema from {schema_path}: {e}")
+
                         parts = []
                         if artifacts:
                             parts = artifacts[0].get("parts", [])
@@ -831,6 +930,17 @@ async def handle_jsonrpc(request: Request):
                                     data_field = part["data"]
                                     if isinstance(data_field, dict) and "data" in data_field:
                                         part["data"] = data_field["data"]
+                                    
+                                    # Validate data_field against schema
+                                    if schema:
+                                        try:
+                                            import jsonschema
+                                            jsonschema.validate(instance=part["data"], schema=schema)
+                                            logger.info("A2UI payload part successfully validated against schema.")
+                                        except jsonschema.ValidationError as e:
+                                            logger.critical(f"A2UI STRICT SCHEMA VALIDATION FAILED: {e.message}")
+                                            logger.critical(f"Invalid Message: {json.dumps(part['data'], indent=2)}")
+                                            raise ValueError(f"A2UI Schema Validation Error: {e.message}") from e
                             
                         return {
                             "jsonrpc": "2.0",

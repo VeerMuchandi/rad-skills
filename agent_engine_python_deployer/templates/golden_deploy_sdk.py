@@ -3,6 +3,32 @@ import vertexai
 from vertexai.preview.reasoning_engines import A2aAgent
 from google.genai import types
 from google.auth import default
+import json
+from google.protobuf import json_format
+
+# Monkey-patch json_format.MessageToJson and MessageToDict to handle Pydantic models (like AgentCard) correctly
+original_message_to_json = json_format.MessageToJson
+def patched_message_to_json(message, *args, **kwargs):
+    if hasattr(message, "model_dump_json"):
+        return message.model_dump_json()
+    elif hasattr(message, "json"):
+        return message.json()
+    elif isinstance(message, dict):
+        return json.dumps(message)
+    return original_message_to_json(message, *args, **kwargs)
+json_format.MessageToJson = patched_message_to_json
+
+original_message_to_dict = json_format.MessageToDict
+def patched_message_to_dict(message, *args, **kwargs):
+    if hasattr(message, "model_dump"):
+        return message.model_dump()
+    elif hasattr(message, "dict"):
+        return message.dict()
+    elif isinstance(message, dict):
+        return message
+    return original_message_to_dict(message, *args, **kwargs)
+json_format.MessageToDict = patched_message_to_dict
+
 
 def main():
     project_id = "your-project-id"

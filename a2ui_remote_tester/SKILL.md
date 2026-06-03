@@ -92,7 +92,27 @@ async def handle_jsonrpc(request: Request):
         url = f"https://{LOCATION}-aiplatform.googleapis.com/v1beta1/projects/{PROJECT_ID}/locations/{LOCATION}/reasoningEngines/{ENGINE_ID}/a2a/v1/message:send"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         
-        payload = {"message": message}
+        # Translate client payload to standard A2A Message format
+        a2a_parts = []
+        if "text" in message and message["text"]:
+            a2a_parts.append({"text": message["text"]})
+        if "parts" in message:
+            for part in message["parts"]:
+                a2a_part = {}
+                if "data" in part:
+                    a2a_part["data"] = {"data": part["data"]}
+                if "metadata" in part:
+                    a2a_part["metadata"] = part["metadata"]
+                if "text" in part:
+                    a2a_part["text"] = part["text"]
+                a2a_parts.append(a2a_part)
+        
+        a2a_message = {
+            "role": "ROLE_USER",
+            "content": a2a_parts
+        }
+        
+        payload = {"message": a2a_message}
         
         logger.info(f"Forwarding to remote agent: {url}")
         res = requests.post(url, headers=headers, json=payload)
@@ -107,15 +127,28 @@ async def handle_jsonrpc(request: Request):
             logger.info(f"Polling Task {task_id}...")
             task_url = f"https://{LOCATION}-aiplatform.googleapis.com/v1beta1/projects/{PROJECT_ID}/locations/{LOCATION}/reasoningEngines/{ENGINE_ID}/a2a/v1/tasks/{task_id}"
             
-            for _ in range(30):
+            for _ in range(90):
                 time.sleep(2)
                 task_res = requests.get(task_url, headers=headers)
+                if task_res.status_code == 404:
+                    logger.warning("Task status returned 404 (not found). Syncing replica, retrying...")
+                    continue
                 if task_res.status_code == 200:
                     task_data = task_res.json()
                     state = task_data.get("status", {}).get("state")
                     
                     if state == "TASK_STATE_SUCCEEDED" or state == "TASK_STATE_COMPLETED":
                         artifacts = task_data.get("artifacts", [])
+                        # Load schema
+                        schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_to_client_with_standard_catalog.json")
+                        schema = None
+                        if os.path.exists(schema_path):
+                            try:
+                                with open(schema_path, "r") as f:
+                                    schema = json.load(f)
+                            except Exception as e:
+                                logger.error(f"Failed to load schema from {schema_path}: {e}")
+
                         parts = []
                         if artifacts:
                             parts = artifacts[0].get("parts", [])
@@ -125,6 +158,17 @@ async def handle_jsonrpc(request: Request):
                                     data_field = part["data"]
                                     if isinstance(data_field, dict) and "data" in data_field:
                                         part["data"] = data_field["data"]
+                                    
+                                    # Validate data_field against schema
+                                    if schema:
+                                        try:
+                                            import jsonschema
+                                            jsonschema.validate(instance=part["data"], schema=schema)
+                                            logger.info("A2UI payload part successfully validated against schema.")
+                                        except jsonschema.ValidationError as e:
+                                            logger.critical(f"A2UI STRICT SCHEMA VALIDATION FAILED: {e.message}")
+                                            logger.critical(f"Invalid Message: {json.dumps(part['data'], indent=2)}")
+                                            raise ValueError(f"A2UI Schema Validation Error: {e.message}") from e
                             
                         return {
                             "jsonrpc": "2.0",
@@ -175,3 +219,8 @@ const select = document.getElementById('your_component_id_select');
 select.value = 'desired_value';
 select.dispatchEvent(new Event('change'));
 ```
+
+### 3. Stateless Task Polling Resilience
+*   **The Problem**: In scaled serverless fleets, task requests may route to container replicas that are still syncing or have not yet registered the task ID, leading to transient `404 Not Found` responses from the `/tasks/{task_id}` endpoint.
+*   **The Solution**: Treat a `404` status code from the task endpoint as a transient working state and continue the polling retry loop. Do not crash or abort the loop on a single non-200 check unless a terminal state (`TASK_STATE_FAILED`) is explicitly returned or the retry limit (e.g., 90 checks/180s) is exhausted.
+

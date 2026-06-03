@@ -364,12 +364,13 @@ When building a custom local tester (e.g., using FastAPI and a standalone HTML f
 ### Multi-Replica Session Recovery (The Golden Pattern)
 
 > [!IMPORTANT]
-> Reasoning Engine replicas are often stateless. To prevent "Session Not Found" errors or conversational resets, you MUST implement **Session Recovery** and **State Injection**.
+> Reasoning Engine replicas are stateless. Under JSON-RPC, `RequestContext.metadata` returns a transient dictionary if the underlying `_params.metadata` is `None`. To prevent updates from being discarded, you must read/write states using `context._params.metadata` directly.
 
 **Implementation Logic:**
-1.  **Extract Context from A2UI**: In your `agent_executor.py`, iterate through the `parts` of the incoming message.
-2.  **Capture Inputs**: Specifically parse the `userAction.inputs` array for form data (e.g., Start Address) and the `userAction.context.metadata` for recovered IDs.
-3.  **Inject State (Transcript Echoing)**: Append recovered state variables directly to the end of the user's `query` string (e.g., `query = f"{query} [State: key=val]"`). This ensures the LLM sees the context even if hit a fresh replica.
+1.  **Polymorphic Extraction**: Iterate through the message parts, checking if the part has `data` as an attribute or key, and support converting Protobuf `Struct` objects to dictionaries using `MessageToDict`.
+2.  **Capture Inputs**: Check `userAction.inputs` for form elements and `userAction.context` for custom parameters.
+3.  **Persistent Write-Back**: Save the recovered metadata dictionary back to `context._params.metadata` (if `_params` exists) so that it persists across reasoning engine tasks.
+4.  **Inject State (Transcript Echoing)**: Append state variables directly to the query prompt (e.g. `query = f"{query} [State: key=value]"`), allowing stateless model worker replicas to recover context easily.
 
 
 ### Conversational UX & Flow (Avoid "Happy Path" Pitfalls)
@@ -678,12 +679,15 @@ class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
             app_name="A2UIAgent",
             agent=root_agent,
             session_service=in_memory_session_service.InMemorySessionService(),
+            auto_create_session=True,
         )
 
     async def execute(self, context: agent_execution.RequestContext, event_queue: events.EventQueue) -> None:
         query = context.get_user_input()
         task = context.current_task
-        session_id = context.context_id or (task.context_id if task else "default")
+        task_id = context.task_id or (task.id if task else "default_task")
+        context_id = context.context_id or (task.context_id if task else "default")
+        session_id = context_id or "default"
         
         # 1. SESSION RECOVERY: Extract state from A2UI payload
         try:
@@ -704,7 +708,7 @@ class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
         if state_str: query = f"{query} [State: {state_str}]"
 
         # 3. EXECUTION: Run ADK Runner with correct types
-        updater = tasks.TaskUpdater(event_queue, task.id, task.context_id)
+        updater = tasks.TaskUpdater(event_queue, task_id, context_id)
         await updater.start_work()
         
         full_text = ""
