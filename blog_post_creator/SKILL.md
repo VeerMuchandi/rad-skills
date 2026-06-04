@@ -15,6 +15,10 @@ The output MUST include actual generated images embedded in the document. You mu
 *   Generate a conceptual banner image at the beginning.
 *   Generate photorealistic inline images corresponding to the capabilities.
 *   **CRITICAL AESTHETIC**: All generated image prompts MUST explicitly include instructions for a "nano banana" style (subtly including a nano banana in the scene) while maintaining the overall cinematic or photorealistic quality.
+*   **OPTIONAL BROWSER SNAPSHOTS**: If the user requests to include verified browser snapshots of the tested app:
+    1. Run the browser E2E test script (e.g., using the proxy server on port 8000 and Playwright browser tester) to capture a screenshot of the running client/dashboard interface.
+    2. Save or copy the screenshot to the agent folder (e.g., as `e2e_browser_result.png`).
+    3. Include this snapshot under a dedicated section in the blog post (e.g., `### Direct from the Browser: Verified E2E Execution`) using standard markdown relative paths.
 
 Embed the newly created image output paths seamlessly into the final markdown using standard markdown image syntax with relative paths (e.g., `![alt text](./image.png)`).
 
