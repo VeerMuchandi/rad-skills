@@ -356,6 +356,28 @@ When building a custom local tester (e.g., using FastAPI and a standalone HTML f
         logger.warning("[DEBUG] Appended state to query: %s", query)
 ```
 
+### Session ID and Context Preservation in A2A Proxy Servers
+*   **The Problem**: In multi-turn A2UI agents, the conversation resets to the initial stage (e.g. Needs Assessment) on subsequent clicks or text entries, despite utilizing persistent session storage.
+*   **The Cause**: The A2A HTTP proxy server did not map the JSON-RPC `session_id` parameter to the `context_id` field inside the forwarded A2A Message payload. Because of this, the A2A SDK generated a new, random UUID context ID for every turn, creating a fresh, empty session on each request.
+*   **The Solution**: The proxy server must explicitly map and forward the incoming session/conversation ID inside the `context_id` property of the A2A message definition:
+    ```python
+    a2a_message = {
+        "role": "ROLE_USER",
+        "content": a2a_parts,
+        "context_id": params.get("session_id")
+    }
+    ```
+
+### Configuring Platform Session/Memory Services on Vertex AI
+*   **The Requirement**: To prevent state loss across container recycling or multi-replica workers, use `VertexAiSessionService` and `VertexAiMemoryBankService`.
+*   **Mandatory Configuration**: Both platform services require the `agent_engine_id` parameter. At runtime, read this from the environment variable `GOOGLE_CLOUD_AGENT_ENGINE_ID` which is automatically injected by the platform:
+    ```python
+    agent_engine_id = os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_ID")
+    session_service = VertexAiSessionService(
+        project=project_id, location=location, agent_engine_id=agent_engine_id
+    )
+    ```
+
 ### VertexAiSessionService Limitations
 *   **The Problem**: You might attempt to use `VertexAiSessionService` to solve the multi-replica state issue by persisting state in Vertex AI.
 *   **The Limitation**: `VertexAiSessionService` does **NOT** support user-provided session IDs when creating sessions (raises `ValueError: User-provided Session id is not supported`).

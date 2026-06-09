@@ -196,11 +196,24 @@ curl -X POST \
 
 Replace `<PROJECT_ID>`, `<AUTH_ID>`, `<CLIENT_ID>`, `<CLIENT_SECRET>`, `<AUTH_URI>`, and `<TOKEN_URI>`.
 
-## 6. A2UI Agent Deployments (Hard Redirection)
+## 6. A2UI Agent Deployments (Source-Based/Terraform)
 
-> [!CAUTION]
-> **Terraform deployments are NOT supported for A2UI agents in this repository.** 
-> A2UI agents require a complex Custom Executor setup (to intercept streams and yield binary `DataPart` objects) which relies on Python Pickle-based deployments. Terraform uses Source-based (`tar.gz`) deployments and cannot support this natively.
+It is fully supported to deploy A2UI/A2A agents to Vertex AI Agent Engine using source-based packaging and Terraform. This leverages a dynamic data source to package a standard FastAPI-compatible `agent_wrapper.py` entrypoint alongside your agent package and `agent_executor.py`, while automatically mapping the required A2A API routes.
 
-**If you need to deploy an A2UI agent, you MUST use the Python SDK Deployer.**
-Please refer to the `Agent Engine Python Deployer` skill for instructions on Pickle-based deployments.
+### Step 1: Initialize
+1. Create a `deploy` folder sibling to your agent package.
+2. Copy `templates/main_a2ui_local.tf` to `deploy/main.tf`.
+
+### Step 2: Configure `deploy/terraform.tfvars`
+```hcl
+project_id        = "your-project-id"
+region            = "us-central1"
+agent_engine_name = "my-a2ui-agent"
+agent_folder_name = "my_a2ui_agent_folder"
+```
+
+### Step 3: Deploy
+Ensure your registration payload is saved as `registration_payload.json` in the parent of the `deploy` folder, and then run:
+```bash
+cd deploy && terraform init && terraform apply
+```
