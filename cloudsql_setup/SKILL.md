@@ -40,7 +40,7 @@ mkdir -p deploy_db
 
 ### Step 2: Copy the Templates
 Copy the templates from this skill to your new `deploy_db` folder.
-*(Note: Replace `<path_to_skill>` with the path of this skill folder, e.g. `skills/cloudsql_setup` or `~/.gemini/jetski/skills/cloudsql_setup`)*
+*(Note: Replace `<path_to_skill>` with the path of this skill folder, e.g. `skills/cloudsql_setup` or `~/.gemini/config/skills/cloudsql_setup`)*
 
 ```bash
 cp -r <path_to_skill>/resources/templates/* deploy_db/
