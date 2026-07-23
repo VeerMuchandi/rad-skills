@@ -186,10 +186,10 @@ For Agent Engine, you **must use the text-based delimiter fallbacks** (`---JSON_
 
 
 ### 4.C. Python Dependencies
-For A2UI agents deployed on Agent Engine using the Python SDK, you MUST include the `a2ui-agent-sdk` SDK from the git repository in your `requirements.txt` and in the `config["requirements"]` list of your deployment script. Removing it will break A2A communication and cause `400 Bad Request` errors.
+For A2UI agents deployed on Agent Engine using the Python SDK, you MUST include the `a2ui-agent-sdk` package in your `requirements.txt` and in the `config["requirements"]` list of your deployment script. Removing it will break A2A communication and cause `400 Bad Request` errors.
 
 ```text
-a2ui-agent-sdk @ git+https://github.com/google/A2UI.git#subdirectory=agent_sdks/python
+a2ui-agent-sdk
 ```
 
 > [!IMPORTANT]
@@ -543,14 +543,14 @@ except Exception as e:
 **Lesson**: When deploying via the Python SDK (Pickle-based), the local environment's package versions are captured in the pickle. If the remote environment installs different versions (due to unpinned requirements), unpickling failures like `KeyError: 'serialized'` are highly likely.
 **Action**: 
 1. Pin all key dependencies in `deploy_sdk.py` (or `deploy_ae.py`) to match known working versions (e.g., from a reference working file).
-2. **CRITICAL**: Ensure you include `"a2ui-agent-sdk @ git+https://github.com/google/A2UI.git#subdirectory=agent_sdks/python"` in the `requirements` list of the `config` dictionary passed to `client.agent_engines.create`.
+2. **CRITICAL**: Ensure you include `"a2ui-agent-sdk"` in the `requirements` list of the `config` dictionary passed to `client.agent_engines.create`.
 3. Ensure your local environment matches these pinned versions before running the deployment script.
 4. Add a local requirements check in your deployment script to warn about mismatches.
 
-### Git Dependency Naming
-**Lesson**: When pulling `a2ui-agent` from git in requirements, use the correct metadata name `a2ui-agent-sdk` to avoid build resolution failures:
+### Dependency Naming
+**Lesson**: Always reference the package by its official name `a2ui-agent-sdk`:
 ```text
-a2ui-agent-sdk @ git+https://github.com/google/A2UI.git#subdirectory=agent_sdks/python
+a2ui-agent-sdk
 ```
 
 ## 12. Reference Code & Samples

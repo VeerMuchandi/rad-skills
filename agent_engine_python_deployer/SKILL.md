@@ -333,7 +333,7 @@ The following specific combination of dependency versions has been verified to w
             "cloudpickle==3.1.2",
             "protobuf==6.33.6",
             "jsonschema==4.26.0",
-            "a2ui-agent-sdk @ git+https://github.com/google/A2UI.git#subdirectory=agent_sdks/python",
+            "a2ui-agent-sdk",
         ],
 ```
 
@@ -385,7 +385,7 @@ json_format.MessageToDict = patched_message_to_dict
 VERSIONS = [
     "google-adk==1.28.1", "a2a-sdk==0.3.25", "pydantic==2.12.5", 
     "cloudpickle==3.1.2", "protobuf==6.33.6",
-    "a2ui-agent-sdk @ git+https://github.com/google/A2UI.git#subdirectory=agent_sdks/python"
+    "a2ui-agent-sdk"
 ]
 
 def main():
