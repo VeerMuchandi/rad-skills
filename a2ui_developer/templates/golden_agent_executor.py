@@ -10,6 +10,11 @@ try:
 except ImportError:
     from agent import root_agent
 
+try:
+    from . import a2ui_tools
+except ImportError:
+    import a2ui_tools
+
 logger = logging.getLogger(__name__)
 
 # MONKEY-PATCH: Fix Gemini Enterprise client payload format mismatch (A2UI v0.8)
@@ -207,31 +212,153 @@ class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
         if state_parts:
             query = f"{query} " + " ".join(state_parts)
 
-        # 3. EXECUTION: Run ADK Runner with correct types
+        # 3. EXECUTION & VALIDATION: Run ADK Runner with retry and validation loop
         updater = tasks.TaskUpdater(event_queue, task_id, context_id)
-        await updater.start_work()
-        
-        full_text = ""
-        async for event in self._runner.run_async(
-            user_id="user", 
-            session_id=session_id, 
-            new_message=genai_types.Content(parts=[genai_types.Part(text=query)])
-        ):
-            if event.content and event.content.parts:
-                for p in event.content.parts:
-                    if hasattr(p, 'text') and p.text:
-                        full_text += p.text
+        current_query_text = query
+        max_retries = 1
+        attempt = 0
 
-        # 4. OUTPUT PARSING: Regex-based extraction (Required for v0.8)
-        json_match = re.search(r"(\{.*\"a2ui_messages\".*\})", full_text, re.DOTALL)
-        parts = [types.Part(root=types.TextPart(text=re.sub(r"---a2ui_JSON---.*", "", full_text, flags=re.DOTALL).strip()))]
-        if json_match:
+        await updater.start_work()
+
+        while attempt <= max_retries:
+            attempt += 1
+            content = genai_types.Content(
+                role="user", parts=[{"text": current_query_text}]
+            )
+
+            final_response_content = None
+
             try:
-                for msg in json.loads(json_match.group(1)).get("a2ui_messages", []):
-                    parts.append(types.Part(root=types.DataPart(data=msg, metadata={"mimeType": "application/json+a2ui"})))
-            except: pass
-            
-        await updater.add_artifact(parts, name="response")
-        await updater.complete()
+                async for event in self._runner.run_async(
+                    user_id="user", session_id=session_id, new_message=content
+                ):
+                    for resp in event.get_function_responses():
+                        val = None
+                        if isinstance(resp.response, dict):
+                            if "result" in resp.response:
+                                val = resp.response["result"]
+                            elif "response" in resp.response:
+                                val = resp.response["response"]
+                            elif len(resp.response) == 1:
+                                val = list(resp.response.values())[0]
+                        elif isinstance(resp.response, str):
+                            val = resp.response
+                            
+                        if isinstance(val, str) and "---a2ui_JSON---" in val:
+                            logger.info("[DEBUG] Intercepted A2UI tool output: %s", val)
+                            final_response_content = val
+                            break
+                            
+                    if final_response_content:
+                        break
+                        
+                    if event.is_final_response():
+                        if (
+                            event.content
+                            and event.content.parts
+                            and event.content.parts[0].text
+                        ):
+                            final_response_content = "\n".join(
+                                [p.text for p in event.content.parts if p.text]
+                            )
+                            logger.info(
+                                "[DEBUG] Final response content: %s", final_response_content
+                            )
+            except Exception as e:
+                await updater.failed(
+                    message=utils.new_agent_text_message(
+                        f"Task failed with error: {str(e)}"
+                    )
+                )
+                return
+
+            if final_response_content is None:
+                if attempt <= max_retries:
+                    current_query_text = "I received no response. Please try again."
+                    continue
+                else:
+                    await updater.failed(
+                        message=utils.new_agent_text_message("No response generated.")
+                    )
+                    return
+
+            is_valid = False
+            error_message = ""
+            json_string_cleaned = "[]"
+            text_part = final_response_content
+
+            if "---a2ui_JSON---" not in final_response_content:
+                error_message = "Delimiter '---a2ui_JSON---' not found."
+            else:
+                try:
+                    text_part, json_string = final_response_content.split(
+                        "---a2ui_JSON---", 1
+                    )
+                    json_string_cleaned = (
+                        json_string.strip().lstrip("```json").rstrip("```").strip().replace('\\\\n', '\n')
+                    )
+
+                    if not json_string_cleaned:
+                        json_string_cleaned = "[]"
+
+                    parsed_json = json.loads(json_string_cleaned)
+                    logger.info("[DEBUG] Parsed JSON: %s", parsed_json)
+                    
+                    version = a2ui_tools.get_a2ui_version()
+                    a2ui_tools.validate_a2ui(parsed_json, version)
+                    is_valid = True
+                except Exception as e:
+                    error_message = f"Validation failed: {str(e)}"
+
+            if is_valid:
+                parts = []
+                if text_part.strip():
+                    parts.append(types.Part(root=types.TextPart(text=text_part.strip())))
+
+                json_data = json.loads(json_string_cleaned)
+                messages = []
+                if isinstance(json_data, list):
+                    messages = json_data
+                elif isinstance(json_data, dict):
+                    if "messages" in json_data:
+                        messages = json_data["messages"]
+                    elif "a2ui_messages" in json_data:
+                        messages = json_data["a2ui_messages"]
+                    else:
+                        messages = [json_data]
+                else:
+                    messages = [json_data]
+
+                for message in messages:
+                    ui_data_part = types.Part(
+                        root=types.DataPart(
+                            data=message,
+                            metadata={"mimeType": "application/json+a2ui"},
+                        )
+                    )
+                    parts.append(ui_data_part)
+
+                await updater.add_artifact(parts, name="response")
+                await updater.complete()
+                return
+
+            else:
+                if attempt <= max_retries:
+                    current_query_text = (
+                        f"Your previous response was invalid. {error_message} You MUST"
+                        " generate a valid response that strictly follows the A2UI JSON"
+                        f" SCHEMA. Please retry the original request: '{query}'"
+                    )
+                    logger.warning(
+                        "[DEBUG] Retrying due to validation error: %s", error_message
+                    )
+                    continue
+                else:
+                    await updater.failed(
+                        message=utils.new_agent_text_message(
+                            f"Validation failed: {error_message}"
+                        )
+                    )
+                    return
 
     async def cancel(self, context, event_queue): pass

@@ -173,11 +173,7 @@ curl -X PATCH \
 
 ## Phase 4: Troubleshooting and Conflicts
 
-### ⚠️ Authorization Profile Locks (Eventual Consistency)
-When you delete an agent resource from Gemini Enterprise, the system may still hold a lock on its associated **Authorization Profile** for some time.
-- **Symptom**: `Registration failed with status 400: projects/.../locations/global/authorizations/... is used by another agent.`
-- **Resolution**:
-  1. **Wait**: It can take 5-10 minutes for the lock to release naturally.
-  2. **Bypass (Recommended for speed)**: Immediately create a new version of the authorization profile (e.g., rename `my-auth-v6` to `my-auth-v7`) and register with the new ID. Let the old one expire/be deleted later.
-
-Presented by the skill to the user.
+| Issue Category & Name | Log/API Signature 🔍 | Generic Root Cause 🧠 | The Reusable Solution 🛠️ |
+| :--- | :--- | :--- | :--- |
+| **Stale Reasoning Engine Link** | Canvas does not open; executes obsolete/deleted agent code. | Discovery Engine registration URL points to an old/stale Reasoning Engine ID footprint. | **Re-registration**: Query the registered agents list, identify URL mismatch, delete the stale agent registration (`DELETE`), and re-register the agent targeting the correct engine ID. |
+| **Auth Profile Cooldown Lock** | `Registration failed with status 400: projects/... is used by another agent`. | Eventual consistency locks the Authorization profile after agent deletion. | **Auth Profile Versioning**: Bypass the lock by creating a new authorization profile version (e.g. `auth-id-v2`) and register the agent with this new ID. |

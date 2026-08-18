@@ -80,6 +80,77 @@ Tells the client to start drawing a specific root component on a surface.
 }
 ```
 
+
+### D. A2UI Protocol & Schema (v0.9)
+Version 0.9 represents a shift to flat component definitions and prompt-embedded schema mappings.
+
+#### Envelope Messages (v0.9)
+> [!IMPORTANT]
+> **Use Unique Surface IDs**: While the following examples show `"surfaceId": "main"`, in any multi-turn conversational interface you must use a unique, descriptive `"surfaceId"` for each step/turn of the flow (e.g. `"plan_selection"`, `"search_form"`, `"provider_list"`) to prevent rendering and history conflicts in the Gemini Enterprise browser client.
+
+All envelopes are wrapped in a top-level `"messages"` list, and each message must contain `"version": "v0.9"`:
+
+1. **`createSurface`**: Initializes a new surface.
+   ```json
+   {
+     "version": "v0.9",
+     "createSurface": {
+       "surfaceId": "main",
+       "catalogId": "https://a2ui.org/specification/v0_9/material_catalog.json",
+       "theme": { "primaryColor": "#00BFFF" },
+       "sendDataModel": true
+     }
+   }
+   ```
+2. **`updateComponents`**: Updates the structural components in the adjacency list.
+   ```json
+   {
+     "version": "v0.9",
+     "updateComponents": {
+       "surfaceId": "main",
+       "components": [
+         { "id": "root", "component": "Card", "child": "container" },
+         { "id": "container", "component": "Column", "children": ["title", "picker", "btn"] }
+       ]
+     }
+   }
+   ```
+3. **`updateDataModel`**: Updates values within the client data model.
+   ```json
+   {
+     "version": "v0.9",
+     "updateDataModel": {
+       "surfaceId": "main",
+       "path": "/",
+       "value": { "choices": ["PPO"] }
+     }
+   }
+   ```
+4. **`deleteSurface`**: Deletes the surface.
+   ```json
+   {
+     "version": "v0.9",
+     "deleteSurface": { "surfaceId": "main" }
+   }
+   ```
+
+#### Key v0.9 Components
+- **Flat Component Type**: Component names are direct strings on the `"component"` property, and properties are flat top-level keys.
+- **`ChoicePicker`**: Replaces `MultipleChoice`. Supports single select (`variant: "mutuallyExclusive"`) or multi-select (`variant: "multipleSelection"`). The value property is bound to a string array path in the data model.
+- **`DateTimeInput`**: Supports date/time selections (`enableDate: true`, `enableTime: false`).
+- **`Button`**: Action event properties use the nested `event` structure:
+  ```json
+  "action": {
+    "event": {
+      "name": "submit",
+      "context": {
+        "message": "User-visible text response",
+        "value": { "path": "/data_path" }
+      }
+    }
+  }
+  ```
+
 ## 3. Developing A2UI Agents
 
 ### Mandatory Workflow & Isolation Rules
@@ -106,9 +177,11 @@ Agents must be explicitly instructed to generate A2UI JSON.
 3.  **Copy Exactly**: When using tools to generate UI strings, you MUST output the exact string returned by the tool, starting from `---a2ui_JSON---`.
 4.  **No Modification**: Do NOT summarize, truncate, or alter the JSON string in any way. Copy it character-for-character.
 5.  **One Block**: Only one JSON payload per turn, at the end.
+6.  **Unique surfaceId per turn (v0.9)**: In Gemini Enterprise, every distinct step or turn of the conversation flow must use a unique, descriptive `"surfaceId"` (e.g., `"plan_selection"`, `"search_form"`, `"provider_list"`). Reusing the same surface ID (such as `"main"`) across multiple turns causes client-side rendering conflicts.
 
 **Sample Instruction:**
 > You are an agent that generates UIs. You MUST separate your conversational response from your A2UI JSON output using the delimiter `---a2ui_JSON---`. The JSON must appear EXACTLY once at the end. When calling a tool that returns UI JSON, you MUST copy the returned string exactly without modification or adding markdown code blocks.
+> **Unique Surface ID Constraint**: *"Use a unique, descriptive 'surfaceId' for each distinct step of the flow (e.g. 'plan_selection', 'search_form', 'provider_list'). Never reuse the same surface ID across different turns."*
 > **Echo Constraint**: *"When a tool returns a string starting with '---a2ui_JSON---', you MUST include that exact string in your response without modification."*
 
 ## 4. Server-Side Implementation (Python ADK)
@@ -137,16 +210,20 @@ class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
        if event.is_final_response():
           final_response_content += event.content.parts[0].text
 
-    # 2. Extract A2UI JSON and convert to DataPart
+    # 2. Extract A2UI JSON and convert to separate DataParts
     text_part, json_string = final_response_content.split("---a2ui_JSON---", 1)
-    # ... parse json_string ...
+    json_data = json.loads(json_string.strip())
     
     parts = []
-    parts.append(types.Part(root=types.TextPart(text=text_part)))
-    parts.append(types.Part(root=types.DataPart(
-        data=json.loads(json_string),
-        metadata={"mimeType": "application/json+a2ui"}
-    )))
+    if text_part.strip():
+        parts.append(types.Part(root=types.TextPart(text=text_part.strip())))
+        
+    messages = json_data.get("messages", json_data.get("a2ui_messages", [json_data]))
+    for message in messages:
+        parts.append(types.Part(root=types.DataPart(
+            data=message,
+            metadata={"mimeType": "application/json+a2ui"}
+        )))
 
     # 3. Yield to stream
     await updater.add_artifact(parts, name="response")
@@ -422,12 +499,39 @@ When deploying to environments like Gemini Enterprise, the frontend strictly enf
     -   **CORRECT**: `{ "a2ui_messages": [ ... ] }`
     -   **INCORRECT**: `[ ... ]` (Returning a raw array fails parsing!).
     -   **Consistency Rule**: Ensure all few-shot examples provided in the system prompt or external files (like `a2ui_examples.py`) use this object wrapper instead of raw arrays, so the LLM learns the correct top-level structure.
-    -   **Executor Adaptation (CRITICAL for Gemini Enterprise)**: When using a custom executor (like `agent_executor.py`) to deliver A2UI payloads, you MUST extract the list of messages from the top-level `"a2ui_messages"` object and send **each message as a separate `DataPart`** with `mimeType="application/json+a2ui"`. Sending the entire wrapped object in a single part will cause rendering failures (like raw JSON display or blank responses) in the platform client.
+    -   **Executor Adaptation (CRITICAL for Gemini Enterprise)**: When using a custom executor (like `agent_executor.py`) to deliver A2UI payloads, you MUST extract the list of messages from the top-level `"a2ui_messages"` object and send **each message as a separate `DataPart`** with `mimeType="application/json+a2ui"`. Sending the entire wrapped object in a single part will cause rendering failures (like raw JSON display or blank responses) in the platform client because the A2A SDK's Pydantic model (`DataPart`) will nest the dict inside a double `"data": {"data": ...}` wrapper.
+        
+        **Code Pattern:**
+        ```python
+        for message in messages:
+            ui_data_part = types.Part(
+                root=types.DataPart(
+                    data=message,
+                    metadata={"mimeType": "application/json+a2ui"}
+                )
+            )
+            parts.append(ui_data_part)
+        ```
 
 9.  **Message Order Sensitivity (CRITICAL)**: When sending multiple A2UI instructions in the same response (e.g., `beginRendering` and `surfaceUpdate`), ensure that **`beginRendering` appears FIRST** in the list of messages. The platform client renderer may fail to process updates if it doesn't know the root container target first!
 10. **The Python f-string Escaping Trap**: When using Python f-strings to define prompts that contain inline JSON examples, literal curly braces `{}` MUST be escaped as `{{}}`. Failure to do so triggers `SyntaxError: Expression nested too deeply`.
 11. **Deployment Pack Completeness (extra_packages)**: When deploying via the Python SDK (Pickle-based), if your agent imports local helper modules (e.g., `a2ui_examples.py`, `a2ui_schema.py`), you MUST add them to the `extra_packages` list in your deployment script. Unlisted files will not be uploaded to the server, causing `ModuleNotFoundError` at runtime.
 12. **`usageHint` Schema Strictness**: Gemini Enterprise strictly enforces the `usageHint` enum values (e.g., `"icon"`, `"avatar"`, `"header"`). Using unsupported values like `"body"`, `"caption"`, or `"h4"` (even if seen in some examples) can cause silent rendering failures, displaying raw JSON instead. When in doubt, omit `usageHint` or stick to the official enum list.
+13. **Re-rendering and Re-creating Surfaces (Preventing duplicate surface ID errors)**: Under the A2UI v0.9 specification, it is an error to send a `createSurface` command for a surface ID that already exists in the viewport/client-state. To display an updated or new surface of the same type without breaking client rendering, you must either:
+    - **Use Dynamic/Unique Surface IDs**: e.g., `"order_summary"` for the initial turn, and `"order_summary_discounted"` for the next turn. This preserves both surfaces in the chat history.
+    - **Explicitly Prepend deleteSurface**: Prepend a `deleteSurface` message targeting the same `surfaceId` right before `createSurface` to clear the old instance first:
+      ```json
+      [
+        {
+          "version": "v0.9",
+          "deleteSurface": { "surfaceId": "my_surface" }
+        },
+        {
+          "version": "v0.9",
+          "createSurface": { "surfaceId": "my_surface", "catalogId": "..." }
+        }
+      ]
+      ```
 
 ### Model Selection for A2UI
 *   **The Problem**: Smaller models like `gemini-2.5-flash` may occasionally fail to generate perfectly valid JSON payloads for complex UIs, or may truncate output due to token limits when prompt instructions are long.
@@ -772,6 +876,9 @@ This section summarizes critical fixes for issues encountered when deploying A2U
 | **Chain-of-Thought Break** | Agent calls Turn 1 tools instead of Turn 2 tools. | Attention on text rather than state. | **Delimited Prompts**: Append state to query: `Actual User Text [State: param1=val|param2=val]`. Instruct model to prioritize `[State]` data. |
 | **Dependency Build Failure** | Deployment fails with "requirements not satisfied". | Version conflicts. | **Clean Build Strategy**: Avoid pinning `google-cloud-aiplatform` to a specific sub-version. Use `@ git+https://github.com/...` syntax for side-loaded SDKs. |
 | **Echo Behavior Failure** | Tool JSON is swallowed or double-wrapped. | Agent tries to be "helpful" by summarizing. | **Echo Constraint**: Add hard constraint: *"When a tool returns a string starting with '---a2ui_JSON---', you MUST include that exact string in your response without modification."* |
+| **Wizard/Multi-turn Panel Flashing or Obscurity** | Canvas side panel flashes, closes, or fails to show the target step's UI on forward/backward navigation. | Using unique surface IDs per turn and constantly deleting/recreating surfaces causes client container panel teardowns and stack overlapping issues. | **Single Persistent Surface Pattern**: Use a single surface ID (e.g. `"navigator"`) for the entire flow. Create the surface ONLY once on the first turn using `createSurface`. For all subsequent turns (Next/Back), output ONLY `updateComponents` and `updateDataModel` targeting that same surface. Do NOT send `createSurface` or `deleteSurface` during transitions. |
+| **State Preservation on Back Navigation** | Navigating back shows default/empty forms, losing previous user selections. | The data model values are not pre-populated in subsequent updates. | **Data Model State Sync**: When outputting `updateDataModel` (especially when going back), dynamically populate the `value` dictionary with the current values of all selections in the state (`plan_type`, `specialty`, etc.) to pre-fill the UI controls. |
+| **Catalog Drift & Component Rejection** | Client displays broken images or silent rendering failure. | Live browser client schema implementation drifts from properties in the online composite catalog (e.g. `roundedCorners` on `MaterialImage` or `style` on standard `Image`). | **Strict Schema Validation & Component Selection**: 1. Avoid custom Material wraps (`MaterialImage`) if standard equivalents (`Image`) exist. 2. Standard components are strict; do NOT append unevaluated properties like `style` to standard components if they restrict it via `unevaluatedProperties: false`. 3. Rely on standard enum properties like `variant: "smallFeature"` to scale standard components rather than custom styles. |
 
 ### 🚀 Best Practice Deployment Workflow
 1. **Verify Model**: Run the probe script to confirm the target region supports the chosen Gemini version.
