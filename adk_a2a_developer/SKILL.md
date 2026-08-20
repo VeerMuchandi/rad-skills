@@ -22,6 +22,7 @@ Here is a template for an A2A executor:
 ```python
 """Agent executor for ADK agents adapted for A2A compatibility."""
 
+import json
 import logging
 from a2a import types
 from a2a import utils
@@ -29,6 +30,61 @@ from a2a.server import agent_execution
 from a2a.server import events
 from a2a.server import tasks
 from a2a.utils import errors as a2a_errors
+
+# Apply Protobuf & Pydantic compatibility patches for Python 3.9/3.10/3.13
+try:
+    from google.protobuf.message import Message
+    _orig_setstate = Message.__setstate__
+
+    def _patched_setstate(self, state):
+        if isinstance(state, dict) and "serialized" not in state:
+            state["serialized"] = b""
+        return _orig_setstate(self, state)
+
+    Message.__setstate__ = _patched_setstate
+except Exception:
+    pass
+
+import google.protobuf.json_format as json_format
+
+# MONKEY-PATCH: Fix Gemini Enterprise client payload format mismatch (A2UI v0.8)
+original_parse = json_format.Parse
+
+def patched_parse(text, message, *args, **kwargs):
+    from a2a.grpc import a2a_pb2
+    if isinstance(message, a2a_pb2.SendMessageRequest):
+        try:
+            if isinstance(text, bytes):
+                text_str = text.decode('utf-8')
+            else:
+                text_str = text
+            
+            data = json.loads(text_str)
+            
+            def fix_a2a_payload(d):
+                if not isinstance(d, dict):
+                    return d
+                if "message" in d and isinstance(d["message"], dict):
+                    msg = d["message"]
+                    if "parts" in msg and isinstance(msg["parts"], list):
+                        for part in msg["parts"]:
+                            if isinstance(part, dict) and "data" in part:
+                                part_data = part["data"]
+                                if isinstance(part_data, dict) and "data" not in part_data:
+                                    part["data"] = {"data": part_data}
+                if "content" in d and isinstance(d["content"], list):
+                    for part in d["content"]:
+                        if isinstance(part, dict) and "data" in part:
+                            part_data = part["data"]
+                            if isinstance(part_data, dict) and "data" not in part_data:
+                                part["data"] = {"data": part_data}
+            fix_a2a_payload(data)
+            text = json.dumps(data)
+        except Exception:
+            pass
+    return original_parse(text, message, *args, **kwargs)
+
+json_format.Parse = patched_parse
 
 import agent # Import your ADK agent
 from google.adk import runners
@@ -86,6 +142,43 @@ class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
           state={},
           session_id=session_id,
       )
+
+    # 1. Action and Context Extraction (Button clicks / userAction)
+    action_context = {}
+    action_query = None
+    try:
+      if hasattr(context, 'message') and context.message and hasattr(context.message, 'parts'):
+        for part in context.message.parts:
+          if hasattr(part, 'root') and hasattr(part.root, 'data'):
+            data = part.root.data
+            if hasattr(part.root, 'metadata') and part.root.metadata and part.root.metadata.get('mimeType') == 'application/json+a2ui':
+              if isinstance(data, dict) and "data" in data:
+                data = data["data"]
+              action_data = None
+              if isinstance(data, dict):
+                if "action" in data:
+                  action_data = data["action"]
+                elif "userAction" in data:
+                  action_data = data["userAction"]
+              if isinstance(action_data, dict):
+                if "event" in action_data and isinstance(action_data["event"], dict):
+                  action_data = action_data["event"]
+                ctx = action_data.get("context", {})
+                if isinstance(ctx, dict):
+                  if "message" in ctx:
+                    action_query = ctx["message"]
+                  action_context.update(ctx)
+      if action_query:
+        query = action_query
+      for k, v in action_context.items():
+        if k != 'message':
+          session.state[k] = v
+      state_vars = [f"{k}={v}" for k, v in session.state.items()]
+      if state_vars:
+        query = f"{query} [State: {', '.join(state_vars)}]"
+        logger.info("[DEBUG] Injected state into query: %s", query)
+    except Exception as e:
+      logger.warning("Failed to extract action context: %s", e)
 
     await updater.start_work()
 

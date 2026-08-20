@@ -7,7 +7,13 @@ description: Expert guide and patterns for building Agent-Driven User Interfaces
 
 This skill equips you with the knowledge and best practices to design, implement, and debug A2UI-compliant agents and clients.
 
-## 0. Skill Initialization
+## 0. Version Standard & Skill Initialization
+
+### A2UI v0.9 is the Default Standard
+* **Default Standard**: You MUST use **A2UI v0.9** by default for all new agent implementations, components, prompts, and schema structures.
+* **Legacy Version Upgrade Rule**: If an existing agent codebase or design is found using an older version (e.g., A2UI v0.8 with `surfaceUpdate`, `beginRendering`, `MultipleChoice`, or raw array wrappers), you MUST proactively suggest upgrading to A2UI v0.9, explain the improvements (flat component architecture, native `ChoicePicker`, cleaner envelope commands `createSurface`/`updateComponents`/`updateDataModel`), and **request explicit approval before upgrading the code to v0.9**.
+
+### Skill Initialization
 **CRITICAL**: This skill relies on local reference documentation that must be kept in sync with the official repository.
 
 **When starting a new session or tasks involving A2UI:**
@@ -21,70 +27,21 @@ This skill equips you with the knowledge and best practices to design, implement
 ## 1. Core Architecture
 
 A2UI decouples UI generation (Agent) from UI rendering (Client).
-*   **Producers**: AI Agents generate abstract UI descriptions (A2UI JSON) alongside natural language.
+*   **Producers**: AI Agents generate abstract UI descriptions (A2UI v0.9 JSON) alongside natural language.
 *   **Protocol**: Messages are streamed via the A2A (Agent-to-Agent) protocol or standard HTTP/SSE.
 *   **Consumers**: Clients (Web, Mobile) interpret the JSON and render native components.
 
 ### Data Flow
 1.  **User Input** -> Agent
-2.  **Agent Logic** -> Generates Text + A2UI JSON (separated by `---a2ui_JSON---`)
+2.  **Agent Logic** -> Generates Text + A2UI v0.9 JSON (separated by `---a2ui_JSON---`)
 3.  **Server** -> Parses stream, translates UI events, and forwards JSON to Client.
-4.  **Client** -> Renders `surfaceUpdate` and `dataModelUpdate`.
+4.  **Client** -> Renders `createSurface`, `updateComponents`, and `updateDataModel`.
 
-## 2. A2UI Protocol & Schema
+## 2. A2UI Protocol & Schema (v0.9 - Default Standard)
 
-### A. `surfaceUpdate` (Structure)
-Defines the component hierarchy using a flat **Adjacency List**.
-*   **`surfaceId`**: Target surface (e.g., "main").
-*   **`components`**: Array of component definitions.
+Version 0.9 represents the standard flat component definition model with declarative envelope commands.
 
-```json
-{
-  "surfaceUpdate": {
-    "surfaceId": "main",
-    "components": [
-      {
-        "id": "root_col",
-        "component": {
-          "Column": {
-            "children": { "explicitList": ["header_1", "card_1"] }
-          }
-        }
-      }
-    ]
-  }
-}
-```
-
-### B. `dataModelUpdate` (Data)
-Populates data for components.
-```json
-{
-  "dataModelUpdate": {
-    "surfaceId": "main",
-    "contents": [
-      { "key": "user_name", "valueString": "Alice" }
-    ]
-  }
-}
-```
-
-### C. `beginRendering` (Signal)
-Tells the client to start drawing a specific root component on a surface.
-```json
-{
-  "beginRendering": {
-    "surfaceId": "main",
-    "root": "root_col"
-  }
-}
-```
-
-
-### D. A2UI Protocol & Schema (v0.9)
-Version 0.9 represents a shift to flat component definitions and prompt-embedded schema mappings.
-
-#### Envelope Messages (v0.9)
+### A. Envelope Messages (v0.9)
 > [!IMPORTANT]
 > **Use Unique Surface IDs**: While the following examples show `"surfaceId": "main"`, in any multi-turn conversational interface you must use a unique, descriptive `"surfaceId"` for each step/turn of the flow (e.g. `"plan_selection"`, `"search_form"`, `"provider_list"`) to prevent rendering and history conflicts in the Gemini Enterprise browser client.
 
@@ -134,7 +91,7 @@ All envelopes are wrapped in a top-level `"messages"` list, and each message mus
    }
    ```
 
-#### Key v0.9 Components
+### B. Key v0.9 Components
 - **Flat Component Type**: Component names are direct strings on the `"component"` property, and properties are flat top-level keys.
 - **`ChoicePicker`**: Replaces `MultipleChoice`. Supports single select (`variant: "mutuallyExclusive"`) or multi-select (`variant: "multipleSelection"`). The value property is bound to a string array path in the data model.
 - **`DateTimeInput`**: Supports date/time selections (`enableDate: true`, `enableTime: false`).
@@ -150,6 +107,16 @@ All envelopes are wrapped in a top-level `"messages"` list, and each message mus
     }
   }
   ```
+
+### C. Legacy A2UI Protocol (v0.8 - Deprecated / Migration Reference)
+Older implementations used `surfaceUpdate`, `dataModelUpdate`, and `beginRendering`:
+* `surfaceUpdate` (defined adjacency list with nested component keys, e.g. `"Column": {"children": {"explicitList": [...]}}`)
+* `dataModelUpdate` (key/valueString maps)
+* `beginRendering` (signal pointing to root component ID)
+* `MultipleChoice` (legacy component with nested `options` array containing objects with `label.literalString` and `value`)
+
+> [!IMPORTANT]
+> **Migration Rule**: If you encounter existing code using v0.8 primitives (`surfaceUpdate`, `beginRendering`, `MultipleChoice`), proactively explain the advantages of v0.9 (flat declarative envelopes, `ChoicePicker`, cleaner data models) and **request user approval before migrating the codebase to v0.9**.
 
 ## 3. Developing A2UI Agents
 
@@ -367,32 +334,55 @@ Refer to the `Agent Engine Python Deployer` skill for instructions on how to pac
 
 13. **Unique Component IDs**: To avoid client-side state collisions, component IDs must be unique across the session, especially when generating identical templated items like search result cards (e.g., `doctor_card_1`, `doctor_card_2`).
 
-### Handling Rich UI Inputs in Gemini Enterprise
+### Handling Rich UI Inputs in Gemini Enterprise (A2UI Button Clicks)
 When deploying A2UI agents to Gemini Enterprise and using rich UI components (like buttons or forms), be aware of how user inputs are delivered to the backend:
-*   **The Problem**: Clicking a button in the UI often sends a generic text message like `"User action triggered."` as the primary user input. Relying solely on `context.get_user_input()` will cause the agent to receive this generic string and lose context, leading to loops or resets.
+*   **The Problem**: Clicking a button in the UI often sends a generic text message like `"User action triggered."` as the primary user input. Relying solely on `context.get_user_input()` will cause the agent to receive this generic string and ignore the underlying intent, leading to loops, stalls, or resets.
 *   **The Solution**: The actual data payload (including the `context` defined in the button action) is delivered in a separate **`DataPart`** of the message with mimeType `application/json+a2ui`.
-*   **Implementation Pattern (Custom Executor)**: In your custom `agent_executor.py`, you MUST iterate through the `parts` of the incoming message, look for the `DataPart` containing `userAction`, and extract the specific message or parameters from it to override or augment the query before passing it to the agent!
+*   **Implementation Pattern (Custom Executor)**: In your custom `agent_executor.py`, you MUST iterate through the `parts` of the incoming message, unwrap nested `data` envelopes if present, extract the `userAction` or `action` payload (including nested `event` dictionaries), assign the hidden `message` to the LLM query, and save all other context variables to `session.state`. Also inject `session.state` into the LLM query as `[State: key=val]` so the agent has full context:
 
 ```python
-    # Example extraction logic in execute() method
+    # Example extraction logic inside agent_executor.py context extraction loop:
+    action_context = {}
+    action_query = None
     try:
         if hasattr(context, 'message') and context.message and hasattr(context.message, 'parts'):
             for part in context.message.parts:
                 if hasattr(part, 'root') and hasattr(part.root, 'data'):
-                    data_part = part.root
-                    if hasattr(data_part, 'metadata') and data_part.metadata and data_part.metadata.get('mimeType') == 'application/json+a2ui':
-                        data = data_part.data
-                        if 'userAction' in data:
-                            user_action = data['userAction']
-                            if 'context' in user_action:
-                                action_context = user_action['context']
-                                if 'message' in action_context:
-                                    query = action_context['message'] # Override query
-                                    
-                                # Save other context to session state
-                                for k, v in action_context.items():
-                                    if k != 'message':
-                                        session.state[k] = v
+                    data = part.root.data
+                    if hasattr(part.root, 'metadata') and part.root.metadata and part.root.metadata.get('mimeType') == 'application/json+a2ui':
+                        # Unwrap nested data wrapper if present
+                        if isinstance(data, dict) and "data" in data:
+                            data = data["data"]
+                        action_data = None
+                        if isinstance(data, dict):
+                            if "action" in data:
+                                action_data = data["action"]
+                            elif "userAction" in data:
+                                action_data = data["userAction"]
+                        if isinstance(action_data, dict):
+                            # Support nested 'event' field
+                            if "event" in action_data and isinstance(action_data["event"], dict):
+                                action_data = action_data["event"]
+                            
+                            ctx = action_data.get("context", {})
+                            if isinstance(ctx, dict):
+                                if "message" in ctx:
+                                    action_query = ctx["message"]
+                                action_context.update(ctx)
+                                
+        if action_query:
+            query = action_query  # Override query with hidden intent message
+            
+        # Save other context variables to session state
+        for k, v in action_context.items():
+            if k != 'message':
+                session.state[k] = v
+                
+        # Inject session state variables into the LLM query for context continuity
+        state_vars = [f"{k}={v}" for k, v in session.state.items()]
+        if state_vars:
+            query = f"{query} [State: {', '.join(state_vars)}]"
+            logger.info("[DEBUG] Injected state into query: %s", query)
     except Exception as e:
         logger.warning("Failed to extract action context: %s", e)
 ```
@@ -555,13 +545,23 @@ When deploying to environments like Gemini Enterprise, the frontend strictly enf
 *   **Mock Data Strictness**: A2UI is validating. Always validate mock data against `A2UI_SCHEMA` before debugging the renderer. A missing wrapper (e.g., `Text.literalString` vs `Text.text.literalString`) breaks rendering.
 *   **Visual Grouping**: Use `Card` or styled `Column` to group related inputs. A flat list of components is valid but visually confusing.
 *   **ID Management**: In `explicitList`, ensure every ID appears exactly **once** to prevent "ghost" duplicates.
-*   **Component Inheritance**: Primitives like `Text` should often inherit styles (e.g., color) from their containers (Buttons, Headers) rather than having hardcoded default styles.
+### Gemini Enterprise UI Styling Limitations & Workarounds
+Gemini Enterprise enforces strict styling on certain primitive A2UI components, ignoring inline `"style"` dictionaries. The A2UI Developer Skill must recommend the following universal workarounds for custom theming, regardless of whether the agent uses a light or dark theme:
 
-### Robust Retry Loop (Server-Side)
-To handle LLM JSON errors gracefully:
-1.  **Stream & Accumulate**: Get full text.
-2.  **Parse & Validate**: Extract JSON and validate against `A2UI_SCHEMA`.
-3.  **Retry**: If validation fails, feed the error back to the LLM (up to 2 retries) requesting correction.
+#### A. The `Tabs` Primitive
+* **Limitation:** The primitive `Tabs` component ignores all custom styling (such as font size and text color) in Gemini Enterprise.
+* **Workaround:** Do not use the `Tabs` primitive if you need custom styling. Instead, build a "Tab Bar" using a `MaterialRow` containing `MaterialButton` components (with `"variant": "text"`). You can then apply any theme-specific styling (like active border bottoms or custom text colors) directly to the buttons.
+* **State Management:** These buttons should trigger a `select_scope` event (via the action parser above) which sends a message back to the agent to re-render the view with the new active tab.
+
+#### B. The `MaterialCheckbox` Label
+* **Limitation:** The `label` property inside `MaterialCheckbox` cannot be reliably styled (e.g., it may default to an illegible grey depending on the environment's base theme).
+* **Workaround:** Omit the `label` property entirely from the `MaterialCheckbox`. Wrap the checkbox in a `MaterialRow` alongside a `MaterialText` component. `MaterialText` fully respects the `"style"` dictionary, allowing you to explicitly set the text color to match your agent's specific theme.
+
+#### C. Nested Card Contrast
+* **Limitation:** Gemini Enterprise does not automatically adjust the contrast of deeply nested cards, which can cause nested cards to blend into the root card (especially in dark modes).
+* **Workaround:** Always explicitly manage the contrast of nested cards. 
+  - **For Dark Themes:** Lighten nested card backgrounds (e.g., from `#121212` to `#1E1E1E`) and use slightly lighter border colors to ensure they pop against the deep black root card.
+  - **For Light Themes:** Use subtle dropshadows, slightly darker grey backgrounds (e.g., `#F5F5F5`), or distinct border colors to differentiate nested cards from the root white card.
 
 ## 11. Operational Guide & Troubleshooting
 
@@ -625,22 +625,65 @@ except ImportError:
     pass
 ```
 
-### Protobuf `KeyError: 'serialized'` on Python 3.13
-**Symptom**: Server crashes on startup in remote Agent Engine environment with `KeyError: 'serialized'` in `google/protobuf/message.py` during `cloudpickle.loads`.
-**Cause**: Protocol Buffer objects rely on C-extensions and do not always pickle/unpickle reliably across different environment versions on Python 3.13.
-**Fix**: Apply a monkey-patch to `Message.__setstate__` at the very top of your `agent_executor.py` (or entry point file) to handle the missing key gracefully:
+### Protobuf Payload Parsing Patch (Gemini Enterprise A2UI v0.8)
+**Issue:** The A2UI frontend in Gemini Enterprise sometimes sends slightly malformed `data` payloads inside `parts` (e.g., missing the nested `data: { data: {...} }` wrapper expected by the strict Protobuf parser). This causes deserialization errors. In addition, Python 3.13 can encounter `KeyError: 'serialized'` in `google/protobuf/message.py` during `cloudpickle.loads`.
+**Fix:** Inject the monkey-patches for `Message.__setstate__` and `google.protobuf.json_format.Parse` at the top of `agent_executor.py` before instantiating the runner:
 
 ```python
+# Apply Protobuf & Pydantic compatibility patches for Python 3.9/3.10/3.13
 try:
     from google.protobuf.message import Message
-    original_setstate = Message.__setstate__
-    def patched_setstate(self, state):
-        if 'serialized' not in state:
-             state['serialized'] = b''
-        return original_setstate(self, state)
-    Message.__setstate__ = patched_setstate
-except Exception as e:
+    _orig_setstate = Message.__setstate__
+
+    def _patched_setstate(self, state):
+        if isinstance(state, dict) and "serialized" not in state:
+            state["serialized"] = b""
+        return _orig_setstate(self, state)
+
+    Message.__setstate__ = _patched_setstate
+except Exception:
     pass
+
+import google.protobuf.json_format as json_format
+
+# MONKEY-PATCH: Fix Gemini Enterprise client payload format mismatch (A2UI v0.8)
+original_parse = json_format.Parse
+
+def patched_parse(text, message, *args, **kwargs):
+    from a2a.grpc import a2a_pb2
+    if isinstance(message, a2a_pb2.SendMessageRequest):
+        try:
+            if isinstance(text, bytes):
+                text_str = text.decode('utf-8')
+            else:
+                text_str = text
+            
+            data = json.loads(text_str)
+            
+            def fix_a2a_payload(d):
+                if not isinstance(d, dict):
+                    return d
+                if "message" in d and isinstance(d["message"], dict):
+                    msg = d["message"]
+                    if "parts" in msg and isinstance(msg["parts"], list):
+                        for part in msg["parts"]:
+                            if isinstance(part, dict) and "data" in part:
+                                part_data = part["data"]
+                                if isinstance(part_data, dict) and "data" not in part_data:
+                                    part["data"] = {"data": part_data}
+                if "content" in d and isinstance(d["content"], list):
+                    for part in d["content"]:
+                        if isinstance(part, dict) and "data" in part:
+                            part_data = part["data"]
+                            if isinstance(part_data, dict) and "data" not in part_data:
+                                part["data"] = {"data": part_data}
+            fix_a2a_payload(data)
+            text = json.dumps(data)
+        except Exception:
+            pass
+    return original_parse(text, message, *args, **kwargs)
+
+json_format.Parse = patched_parse
 ```
 
 ### Dependency Parity (Local vs Remote)
@@ -797,6 +840,61 @@ from google.adk.sessions import in_memory_session_service
 from google.genai import types as genai_types
 from agent import root_agent
 
+# Apply Protobuf & Pydantic compatibility patches for Python 3.9/3.10/3.13
+try:
+    from google.protobuf.message import Message
+    _orig_setstate = Message.__setstate__
+
+    def _patched_setstate(self, state):
+        if isinstance(state, dict) and "serialized" not in state:
+            state["serialized"] = b""
+        return _orig_setstate(self, state)
+
+    Message.__setstate__ = _patched_setstate
+except Exception:
+    pass
+
+import google.protobuf.json_format as json_format
+
+# MONKEY-PATCH: Fix Gemini Enterprise client payload format mismatch (A2UI v0.8)
+original_parse = json_format.Parse
+
+def patched_parse(text, message, *args, **kwargs):
+    from a2a.grpc import a2a_pb2
+    if isinstance(message, a2a_pb2.SendMessageRequest):
+        try:
+            if isinstance(text, bytes):
+                text_str = text.decode('utf-8')
+            else:
+                text_str = text
+            
+            data = json.loads(text_str)
+            
+            def fix_a2a_payload(d):
+                if not isinstance(d, dict):
+                    return d
+                if "message" in d and isinstance(d["message"], dict):
+                    msg = d["message"]
+                    if "parts" in msg and isinstance(msg["parts"], list):
+                        for part in msg["parts"]:
+                            if isinstance(part, dict) and "data" in part:
+                                part_data = part["data"]
+                                if isinstance(part_data, dict) and "data" not in part_data:
+                                    part["data"] = {"data": part_data}
+                if "content" in d and isinstance(d["content"], list):
+                    for part in d["content"]:
+                        if isinstance(part, dict) and "data" in part:
+                            part_data = part["data"]
+                            if isinstance(part_data, dict) and "data" not in part_data:
+                                part["data"] = {"data": part_data}
+            fix_a2a_payload(data)
+            text = json.dumps(data)
+        except Exception:
+            pass
+    return original_parse(text, message, *args, **kwargs)
+
+json_format.Parse = patched_parse
+
 logger = logging.getLogger(__name__)
 
 class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
@@ -815,23 +913,54 @@ class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
         context_id = context.context_id or (task.context_id if task else "default")
         session_id = context_id or "default"
         
-        # 1. SESSION RECOVERY: Extract state from A2UI payload
+        # 1. SESSION RECOVERY & ACTION PARSING: Extract state & hidden action from A2UI payload
+        action_context = {}
+        action_query = None
         try:
             if hasattr(context, 'message') and context.message:
                 for part in context.message.parts:
                     if hasattr(part, 'root') and hasattr(part.root, 'data'):
                         data = part.root.data
-                        if isinstance(data, dict) and 'userAction' in data:
-                            action_ctx = data['userAction'].get('context', {})
-                            query = action_ctx.get('message', query)
-                            # Recover Form Inputs
-                            for item in data['userAction'].get('inputs', []):
-                                if item.get('id'): context.metadata[item['id']] = item['value']
+                        if hasattr(part.root, 'metadata') and part.root.metadata and part.root.metadata.get('mimeType') == 'application/json+a2ui':
+                            # Unwrap nested data wrapper if present
+                            if isinstance(data, dict) and "data" in data:
+                                data = data["data"]
+
+                            action_data = None
+                            if isinstance(data, dict):
+                                if "action" in data:
+                                    action_data = data["action"]
+                                elif "userAction" in data:
+                                    action_data = data["userAction"]
+
+                            if isinstance(action_data, dict):
+                                # Support nested 'event' field
+                                if "event" in action_data and isinstance(action_data["event"], dict):
+                                    action_data = action_data["event"]
+                                
+                                ctx = action_data.get("context", {})
+                                if isinstance(ctx, dict):
+                                    if "message" in ctx:
+                                        action_query = ctx["message"]
+                                    action_context.update(ctx)
+
+                                # Recover Form Inputs
+                                for item in action_data.get("inputs", []):
+                                    if isinstance(item, dict) and item.get("id"):
+                                        context.metadata[item["id"]] = item["value"]
+                                        action_context[item["id"]] = item["value"]
+
+            if action_query:
+                query = action_query  # Override query with hidden intent message
+                
+            for k, v in action_context.items():
+                if k != 'message':
+                    context.metadata[k] = v
         except Exception as e: logger.warning(f"Recovery failed: {e}")
 
         # 2. STATE INJECTION: Persist state via prompt (Transcript Echoing)
-        state_str = "|".join([f"{k}={v}" for k, v in context.metadata.items()])
-        if state_str: query = f"{query} [State: {state_str}]"
+        state_str = " ".join([f"[State: {k}={v}]" for k, v in context.metadata.items() if k != 'message'])
+        if state_str: query = f"{query} {state_str}"
 
         # 3. EXECUTION: Run ADK Runner with correct types
         updater = tasks.TaskUpdater(event_queue, task_id, context_id)

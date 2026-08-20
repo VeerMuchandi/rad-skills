@@ -163,7 +163,7 @@ curl -X PATCH \
   -d '{
     "displayName": "My A2UI Agent",
     "a2aAgentDefinition": {
-      "jsonAgentCard": "{\"capabilities\":{\"extensions\":[{\"uri\":\"https://a2ui.org/a2a-extension/a2ui/v0.8\",\"description\":\"Ability to render A2UI\",\"required\":false,\"params\":{\"supportedCatalogIds\":[\"https://a2ui.org/specification/v0_8/standard_catalog_definition.json\"]}}],\"streaming\":false},\"defaultInputModes\":[\"text/plain\"],\"defaultOutputModes\":[\"application/json\"],\"description\":\"My My A2UI Agent\",\"name\":\"My A2UI Agent\",\"preferredTransport\":\"HTTP+JSON\",\"protocolVersion\":\"0.3.0\",\"skills\":[...],\"supportsAuthenticatedExtendedCard\":true,\"url\":\"https://us-central1-aiplatform.googleapis.com/v1beta1/projects/\${PROJECT_ID}/locations/us-central1/reasoningEngines/\${REASONING_ENGINE_ID}/a2a\",\"version\":\"1.0.0\"}"
+      "jsonAgentCard": "{\"capabilities\":{\"extensions\":[{\"uri\":\"https://a2ui.org/a2a-extension/a2ui/v0.8\",\"description\":\"Ability to render A2UI\",\"required\":false,\"params\":{\"supportedCatalogIds\":[\"https://a2ui.org/specification/v0_8/standard_catalog_definition.json\"]}}],\"streaming\":false},\"defaultInputModes\":[\"text/plain\"],\"defaultOutputModes\":[\"application/json\"],\"description\":\"My My A2UI Agent\",\"name\":\"My A2UI Agent\",\"preferredTransport\":\"JSONRPC\",\"protocolVersion\":\"0.3.0\",\"skills\":[...],\"supportsAuthenticatedExtendedCard\":true,\"url\":\"https://us-central1-aiplatform.googleapis.com/v1beta1/projects/\${PROJECT_ID}/locations/us-central1/reasoningEngines/\${REASONING_ENGINE_ID}/a2a\",\"version\":\"1.0.0\"}"
     },
     "authorizationConfig": {
       "agentAuthorization": "projects/\${PROJECT_NUMBER}/locations/global/authorizations/\${AUTH_ID}"

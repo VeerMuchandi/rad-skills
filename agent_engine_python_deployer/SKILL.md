@@ -358,6 +358,20 @@ from vertexai.preview.reasoning_engines import A2aAgent
 from google.genai import types
 from google.protobuf import json_format
 
+# Apply Protobuf & Pydantic compatibility patches for Python 3.9/3.10/3.13
+try:
+    from google.protobuf.message import Message
+    _orig_setstate = Message.__setstate__
+
+    def _patched_setstate(self, state):
+        if isinstance(state, dict) and "serialized" not in state:
+            state["serialized"] = b""
+        return _orig_setstate(self, state)
+
+    Message.__setstate__ = _patched_setstate
+except Exception:
+    pass
+
 # Monkey-patch json_format.MessageToJson and MessageToDict to handle Pydantic models (like AgentCard) correctly
 original_message_to_json = json_format.MessageToJson
 def patched_message_to_json(message, *args, **kwargs):
@@ -380,6 +394,45 @@ def patched_message_to_dict(message, *args, **kwargs):
         return message
     return original_message_to_dict(message, *args, **kwargs)
 json_format.MessageToDict = patched_message_to_dict
+
+# MONKEY-PATCH: Fix Gemini Enterprise client payload format mismatch (A2UI v0.8)
+original_parse = json_format.Parse
+
+def patched_parse(text, message, *args, **kwargs):
+    from a2a.grpc import a2a_pb2
+    if isinstance(message, a2a_pb2.SendMessageRequest):
+        try:
+            if isinstance(text, bytes):
+                text_str = text.decode('utf-8')
+            else:
+                text_str = text
+            
+            data = json.loads(text_str)
+            
+            def fix_a2a_payload(d):
+                if not isinstance(d, dict):
+                    return d
+                if "message" in d and isinstance(d["message"], dict):
+                    msg = d["message"]
+                    if "parts" in msg and isinstance(msg["parts"], list):
+                        for part in msg["parts"]:
+                            if isinstance(part, dict) and "data" in part:
+                                part_data = part["data"]
+                                if isinstance(part_data, dict) and "data" not in part_data:
+                                    part["data"] = {"data": part_data}
+                if "content" in d and isinstance(d["content"], list):
+                    for part in d["content"]:
+                        if isinstance(part, dict) and "data" in part:
+                            part_data = part["data"]
+                            if isinstance(part_data, dict) and "data" not in part_data:
+                                part["data"] = {"data": part_data}
+            fix_a2a_payload(data)
+            text = json.dumps(data)
+        except Exception:
+            pass
+    return original_parse(text, message, *args, **kwargs)
+
+json_format.Parse = patched_parse
 
 # STABLE VERSIONS FOR PYTHON 3.13 / A2UI
 VERSIONS = [

@@ -17,6 +17,22 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Apply Protobuf & Pydantic compatibility patches for Python 3.9/3.10/3.13
+try:
+    from google.protobuf.message import Message
+    _orig_setstate = Message.__setstate__
+
+    def _patched_setstate(self, state):
+        if isinstance(state, dict) and "serialized" not in state:
+            state["serialized"] = b""
+        return _orig_setstate(self, state)
+
+    Message.__setstate__ = _patched_setstate
+except Exception:
+    pass
+
+import google.protobuf.json_format as json_format
+
 # MONKEY-PATCH: Fix Gemini Enterprise client payload format mismatch (A2UI v0.8)
 original_parse = json_format.Parse
 
@@ -34,27 +50,27 @@ def patched_parse(text, message, *args, **kwargs):
             def fix_a2a_payload(d):
                 if not isinstance(d, dict):
                     return d
+                if "message" in d and isinstance(d["message"], dict):
+                    msg = d["message"]
+                    if "parts" in msg and isinstance(msg["parts"], list):
+                        for part in msg["parts"]:
+                            if isinstance(part, dict) and "data" in part:
+                                part_data = part["data"]
+                                if isinstance(part_data, dict) and "data" not in part_data:
+                                    part["data"] = {"data": part_data}
                 if "content" in d and isinstance(d["content"], list):
                     for part in d["content"]:
                         if isinstance(part, dict) and "data" in part:
                             part_data = part["data"]
                             if isinstance(part_data, dict) and "data" not in part_data:
                                 part["data"] = {"data": part_data}
-                for k, v in list(d.items()):
-                    if isinstance(v, dict):
-                        fix_a2a_payload(v)
-                    elif isinstance(v, list):
-                        for item in v:
-                            if isinstance(item, dict):
-                                fix_a2a_payload(item)
-                return d
-                
-            fixed_data = fix_a2a_payload(data)
-            text = json.dumps(fixed_data)
-        except Exception as e:
-            logger.warning(f"Patched Parse failed to preprocess A2A payload: {e}")
-            
+            fix_a2a_payload(data)
+            text = json.dumps(data)
+        except Exception:
+            pass
     return original_parse(text, message, *args, **kwargs)
+
+json_format.Parse = patched_parse
 
 def apply_monkey_patch():
     json_format.Parse = patched_parse
@@ -131,19 +147,33 @@ class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
                                 
                         if isinstance(data, dict) and 'data' in data:
                             data = data['data']
-                        if isinstance(data, dict) and 'userAction' in data:
-                            user_action = data['userAction']
-                            action_ctx = user_action.get('context', {})
-                            query = action_ctx.get('message', query)
+
+                        action_data = None
+                        if isinstance(data, dict):
+                            if 'action' in data:
+                                action_data = data['action']
+                            elif 'userAction' in data:
+                                action_data = data['userAction']
+
+                        if isinstance(action_data, dict):
+                            # Support nested 'event' field
+                            if 'event' in action_data and isinstance(action_data['event'], dict):
+                                action_data = action_data['event']
+
+                            action_ctx = action_data.get('context', {})
+                            if isinstance(action_ctx, dict):
+                                if 'message' in action_ctx:
+                                    query = action_ctx['message']
+                                # Recover context keys
+                                for k, v in action_ctx.items():
+                                    if k != 'message':
+                                        path_key = f"/trip/{k}" if not k.startswith('/') else k
+                                        metadata_dict[path_key] = v
+
                             # Recover Form Inputs
-                            for item in user_action.get('inputs', []):
-                                if item.get('id'): 
+                            for item in action_data.get('inputs', []):
+                                if isinstance(item, dict) and item.get('id'): 
                                     metadata_dict[item['id']] = item['value']
-                            # Also recover directly from context keys (e.g. for remote_tester compatibility)
-                            for k, v in action_ctx.items():
-                                if k != 'message':
-                                    path_key = f"/trip/{k}" if not k.startswith('/') else k
-                                    metadata_dict[path_key] = v
                             
                             # Server-side address syncing for Same as starting address checkbox
                             if metadata_dict.get('/trip/same_as_start') is True or metadata_dict.get('same_as_start') is True:
