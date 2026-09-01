@@ -100,15 +100,17 @@ class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
 
   _runner: runners.Runner
 
-  def __init__(self):
-    self._agent = agent.root_agent
-    self._runner = runners.Runner(
-        app_name=self._agent.name,
-        agent=self._agent,
-        session_service=in_memory_session_service.InMemorySessionService(),
-        artifact_service=in_memory_artifact_service.InMemoryArtifactService(),
-        memory_service=in_memory_memory_service.InMemoryMemoryService(),
-    )
+  def __init__(self, *args, **kwargs):
+    self._runner = kwargs.get('runner')
+    if not self._runner:
+      self._agent = agent.root_agent
+      self._runner = runners.Runner(
+          app_name=self._agent.name,
+          agent=self._agent,
+          session_service=in_memory_session_service.InMemorySessionService(),
+          artifact_service=in_memory_artifact_service.InMemoryArtifactService(),
+          memory_service=in_memory_memory_service.InMemoryMemoryService(),
+      )
     self._user_id = "remote_agent"
 
   async def execute(
@@ -369,9 +371,46 @@ try:
     original_setstate = Message.__setstate__
     def patched_setstate(self, state):
         if 'serialized' not in state:
-             state['serialized'] = b''
+            state['serialized'] = b''
         return original_setstate(self, state)
     Message.__setstate__ = patched_setstate
 except Exception as e:
     pass
+```
+
+### 4. Deploying via `adk api_server` (Cloud Run / Containers)
+When deploying A2A / A2UI agents using the standard `adk api_server` command (e.g. on Cloud Run), the server internally instantiates the default text-only `A2aAgentExecutor`. To route requests through your custom `AdkAgentToA2AExecutor`, apply the following wiring:
+
+#### A. `agent.py` Monkey-Patch
+Include this snippet near the top of `agent.py`:
+```python
+# Monkey-patch ADK's default A2A executor to use our custom A2UI-aware executor
+try:
+    import google.adk.a2a.executor.a2a_agent_executor as a2a_executor_mod
+    import agent_executor
+    a2a_executor_mod.A2aAgentExecutor = agent_executor.AdkAgentToA2AExecutor
+except Exception as e:
+    import logging
+    logging.warning(f"Failed to monkey-patch A2aAgentExecutor: {e}")
+```
+
+#### B. `agent_executor.py` Constructor Update
+Ensure the executor accepts `*args` and `**kwargs` so it can receive the runner instance created by `adk api_server`:
+```python
+class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
+    def __init__(self, *args, **kwargs):
+        self._runner = kwargs.get('runner')
+        if not self._runner:
+            self._runner = runners.Runner(
+                app_name="A2UIAgent",
+                agent=root_agent,
+                session_service=in_memory_session_service.InMemorySessionService(),
+                auto_create_session=True,
+            )
+```
+
+#### C. Container `PYTHONPATH`
+Add the agent folder to `PYTHONPATH` in the Dockerfile so that `import agent_executor` resolves cleanly:
+```dockerfile
+ENV PYTHONPATH="/app/agents/{agent_name}:$PYTHONPATH"
 ```

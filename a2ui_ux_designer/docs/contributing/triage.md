@@ -1,8 +1,8 @@
 # Triage for PRs and issues
 
-go/a2ui-triage
+issue triage guide
 
-See go/a2ui-triage for internal information.
+See issue triage guide for internal information.
 
 ## Goals
 
@@ -59,7 +59,7 @@ Use [standard replies](triage-templates.md) that are provided for standard cases
 [needs-triage]: https://github.com/a2ui-project/a2ui/issues?q=state%3Aopen%20label%3A%22status%3A%20needs-triage%22%20repo%3Aa2ui-project%2Fa2ui%2Cflutter%2Fgenui%20-label%3A%22status%3A%20in-discussion%22%20sort%3Aupdated-asc%20-label%3A%22status%3A%20waiting-for-user-response%22
 [in-discussion]: https://github.com/a2ui-project/a2ui/issues?q=state%3Aopen%20label%3A%22status%3A%20in-discussion%22
 
-See internal steps in: go/a2ui-oncall-notes-template.
+See internal steps in: oncall template.
 
 ## AI assistance
 

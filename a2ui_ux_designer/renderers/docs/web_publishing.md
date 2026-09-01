@@ -66,7 +66,7 @@ By default, the script runs in dry-run mode to prevent accidental uploads; the
 ./renderers/scripts/publish_npm.mjs --package=lit --package=web_core --no-dry-run
 ```
 
-Artifacts are uploaded to: [go/a2ui-oss-exit-gate-artifacts](https://go/a2ui-oss-exit-gate-artifacts).
+Artifacts are uploaded to: release artifacts directory.
 This URL points to a web app that allows verifying that the packages have been uploaded correctly.
 
 For each package it should be checked:

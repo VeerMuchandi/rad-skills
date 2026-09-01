@@ -8,7 +8,7 @@ The following scripts in `renderers/scripts/` automate the versioning, building,
 
 ### Pre-requirement: Artifact registry configuration
 
-_(Note: Only Googlers will be able to do this. This is a one-time setup.)_
+_(Note: Only project maintainers will be able to do this. This is a one-time setup.)_
 
 Add the following line to your `~/.npmrc` file:
 

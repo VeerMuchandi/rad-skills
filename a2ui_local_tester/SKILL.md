@@ -687,22 +687,33 @@ Create `index.html` in the `local_tester` folder:
                 return div;
             }
             
-            if (comp.TextField) {
+            if (comp.TextField || comp.component === 'MaterialInput') {
+                const inputDef = comp.TextField || comp;
                 const div = document.createElement('div');
                 div.style.display = 'flex';
                 div.style.flexDirection = 'column';
+                div.style.marginBottom = '8px';
                 
                 const label = document.createElement('label');
-                label.innerText = comp.TextField.label.literalString || "";
+                label.innerText = typeof inputDef.label === 'string' ? inputDef.label : (inputDef.label?.literalString || "");
+                label.style.fontWeight = '500';
+                label.style.marginBottom = '4px';
                 
                 const input = document.createElement('input');
-                input.type = 'text';
+                input.type = inputDef.type || 'text';
+                if (inputDef.placeholder) {
+                    input.placeholder = typeof inputDef.placeholder === 'string' ? inputDef.placeholder : (inputDef.placeholder.literalString || "");
+                }
+                input.style.padding = '8px 12px';
+                input.style.borderRadius = '4px';
+                input.style.border = '1px solid #ccc';
                 
                 div.appendChild(label);
                 div.appendChild(input);
                 
-                if (comp.TextField.text && comp.TextField.text.path) {
-                    const path = comp.TextField.text.path;
+                const valObj = inputDef.text || inputDef.value;
+                if (valObj && valObj.path) {
+                    const path = valObj.path;
                     input.id = path + "_input";
                     input.value = dataModel[path] || "";
                     input.oninput = (e) => {
@@ -713,29 +724,33 @@ Create `index.html` in the `local_tester` folder:
                 return div;
             }
             
-            if (type === 'Image') {
+            if (type === 'Image' || comp.component === 'MaterialImage') {
+                const imgDef = comp.Image || comp;
                 const img = document.createElement('img');
-                img.src = comp.Image.url.literalString || comp.Image.url.path || "";
+                const urlVal = imgDef.url?.literalString || imgDef.url?.path || (typeof imgDef.url === 'string' ? imgDef.url : "");
+                img.src = urlVal;
                 img.style.maxWidth = '100px';
                 img.style.maxHeight = '100px';
-                img.style.objectFit = comp.Image.fit || 'contain';
+                img.style.objectFit = imgDef.fit || 'contain';
                 img.style.display = 'block';
                 img.style.marginBottom = '5px';
                 return img;
             }
             
-            if (comp.WebFrameUrl) {
+            if (comp.WebFrameUrl || comp.component === 'IFrameUrl') {
+                const iframeDef = comp.WebFrameUrl || comp;
                 const iframe = document.createElement('iframe');
-                const urlObj = comp.WebFrameUrl.url;
                 let srcUrl = "";
-                if (urlObj.literalString) {
-                    srcUrl = urlObj.literalString;
-                } else if (urlObj.path) {
-                    srcUrl = dataModel[urlObj.path] || "";
+                if (typeof iframeDef.url === 'string') {
+                    srcUrl = iframeDef.url;
+                } else if (iframeDef.url?.literalString) {
+                    srcUrl = iframeDef.url.literalString;
+                } else if (iframeDef.url?.path) {
+                    srcUrl = dataModel[iframeDef.url.path] || "";
                 }
                 iframe.src = srcUrl;
                 iframe.width = "100%";
-                iframe.height = (comp.WebFrameUrl.height || 450) + "px";
+                iframe.height = (iframeDef.height || 650) + "px";
                 iframe.style.border = "none";
                 iframe.style.borderRadius = "8px";
                 iframe.style.boxShadow = "0 1px 3px rgba(0,0,0,0.1)";
@@ -743,18 +758,22 @@ Create `index.html` in the `local_tester` folder:
                 return iframe;
             }
             
-            if (comp.WebFrameSrcdoc) {
+            if (comp.WebFrameSrcdoc || comp.component === 'IFrameSrcdoc') {
+                const iframeDef = comp.WebFrameSrcdoc || comp;
                 const iframe = document.createElement('iframe');
-                const srcdocObj = comp.WebFrameSrcdoc.srcdoc;
                 let srcdocHtml = "";
-                if (srcdocObj && srcdocObj.literalString) {
-                    srcdocHtml = srcdocObj.literalString;
-                } else if (srcdocObj && srcdocObj.path) {
-                    srcdocHtml = dataModel[srcdocObj.path] || "";
+                if (typeof iframeDef.htmlContent === 'string') {
+                    srcdocHtml = iframeDef.htmlContent;
+                } else if (typeof iframeDef.srcdoc === 'string') {
+                    srcdocHtml = iframeDef.srcdoc;
+                } else if (iframeDef.srcdoc?.literalString) {
+                    srcdocHtml = iframeDef.srcdoc.literalString;
+                } else if (iframeDef.srcdoc?.path) {
+                    srcdocHtml = dataModel[iframeDef.srcdoc.path] || "";
                 }
                 iframe.srcdoc = srcdocHtml;
                 iframe.width = "100%";
-                iframe.height = (comp.WebFrameSrcdoc.height || 400) + "px";
+                iframe.height = (iframeDef.height || 400) + "px";
                 iframe.style.border = "none";
                 iframe.style.borderRadius = "8px";
                 iframe.style.boxShadow = "0 1px 3px rgba(0,0,0,0.1)";
@@ -981,7 +1000,7 @@ Open the local URL (e.g., `http://localhost:8000`) in your browser.
 
 ### 1. Unified Origin for Remote Environments
 *   **The Problem**: Serving the mock client (port 8080) and the API (port 8000) on different ports causes CORS preflight (OPTIONS) requests. In remote SSH environments using proxies (like Google's ÜberProxy), these preflight requests may be redirected to SSO login pages, which browsers block, causing fetch failures.
-*   **The Solution**: **Serve the mock client directly from the FastAPI server** at the root `/` endpoint. This puts both on the same origin (e.g., `http://vmps.c.googlers.com:8000/`) and avoids CORS issues entirely.
+*   **The Solution**: **Serve the mock client directly from the FastAPI server** at the root `/` endpoint. This puts both on the same origin (e.g., `http://localhost:8000/`) and avoids CORS issues entirely.
 
 ### 2. Reliable Automation of Dropdowns (MultipleChoice)
 *   **The Problem**: Simulating key presses on `<select>` elements in the mock client may not reliably trigger the `onchange` event, resulting in empty values being sent in the action context.

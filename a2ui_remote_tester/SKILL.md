@@ -209,7 +209,7 @@ Open the local URL (e.g., `http://localhost:8000`) in your browser.
 
 ### 1. Unified Origin for Remote Environments
 *   **The Problem**: Serving the mock client (port 8080) and the API (port 8000) on different ports causes CORS preflight (OPTIONS) requests. In remote SSH environments using proxies (like Google's ÜberProxy), these preflight requests may be redirected to SSO login pages, which browsers block, causing fetch failures.
-*   **The Solution**: **Serve the mock client directly from the FastAPI server** at the root `/` endpoint. This puts both on the same origin (e.g., `http://vmps.c.googlers.com:8000/`) and avoids CORS issues entirely.
+*   **The Solution**: **Serve the mock client directly from the FastAPI server** at the root `/` endpoint. This puts both on the same origin (e.g., `http://localhost:8000/`) and avoids CORS issues entirely.
 
 ### 2. Reliable Automation of Dropdowns (MultipleChoice)
 *   **The Problem**: Simulating key presses on `<select>` elements in the mock client may not reliably trigger the `onchange` event, resulting in empty values being sent in the action context.

@@ -153,62 +153,41 @@ Agents must be explicitly instructed to generate A2UI JSON.
 
 ## 4. Server-Side Implementation (Python ADK)
 
-### 4.A. Cloud Run (Raw HTTP/A2A Agent)
-Requires a custom `AgentExecutor` to intercept tool responses or stream outputs and yield a native `DataPart` with `mimeType="application/json+a2ui"` directly to the HTTP stream.
+### 4.A. Cloud Run (`adk api_server` / A2A Agent)
+When running A2UI agents via `adk api_server` in Cloud Run containers, the server by default spins up the standard text-only executor. To route requests through your custom A2UI-aware executor (`AdkAgentToA2AExecutor`), configure the following wiring:
 
-#### standard custom_executor.py
+#### 1. `agent.py` Monkey-Patch
+Include this snippet near the top of the agent entrypoint file (`agent.py`):
 ```python
-import json
-from a2a import types
-from a2a.server import agent_execution
-from a2a.server import events
-from google.adk import runners
-
-class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
-  def __init__(self):
-    self._agent = local_agent.root_agent  # Your ADK LlmAgent
-    self._runner = runners.Runner(...)
-
-  async def execute(self, context: agent_execution.RequestContext, event_queue: events.EventQueue) -> None:
-    query = context.get_user_input()
-    # 1. Run the agent stream
-    final_response_content = ""
-    async for event in self._runner.run_async(...):
-       if event.is_final_response():
-          final_response_content += event.content.parts[0].text
-
-    # 2. Extract A2UI JSON and convert to separate DataParts
-    text_part, json_string = final_response_content.split("---a2ui_JSON---", 1)
-    json_data = json.loads(json_string.strip())
-    
-    parts = []
-    if text_part.strip():
-        parts.append(types.Part(root=types.TextPart(text=text_part.strip())))
-        
-    messages = json_data.get("messages", json_data.get("a2ui_messages", [json_data]))
-    for message in messages:
-        parts.append(types.Part(root=types.DataPart(
-            data=message,
-            metadata={"mimeType": "application/json+a2ui"}
-        )))
-
-    # 3. Yield to stream
-    await updater.add_artifact(parts, name="response")
-    await updater.complete()
+# Monkey-patch ADK's default A2A executor to use our custom A2UI-aware executor
+try:
+    import google.adk.a2a.executor.a2a_agent_executor as a2a_executor_mod
+    import agent_executor
+    a2a_executor_mod.A2aAgentExecutor = agent_executor.AdkAgentToA2AExecutor
+except Exception as e:
+    import logging
+    logging.warning(f"Failed to monkey-patch A2aAgentExecutor: {e}")
 ```
 
-#### standard app.py (FastAPI/Starlette)
+#### 2. `agent_executor.py` Constructor
+Ensure your custom executor constructor accepts `*args` and `**kwargs`, pulling the runner provided by `adk api_server`:
 ```python
-from starlette.applications import Starlette
-from a2a.server.apps import A2AStarletteApplication
-from a2a.server.request_handlers import DefaultRequestHandler
+class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
+    def __init__(self, *args, **kwargs):
+        self._runner = kwargs.get('runner')
+        if not self._runner:
+            self._runner = runners.Runner(
+                app_name="A2UIAgent",
+                agent=root_agent,
+                session_service=in_memory_session_service.InMemorySessionService(),
+                auto_create_session=True,
+            )
+```
 
-agent_executor = DefaultRequestHandler() # Or appropriate executor
-request_handler = DefaultRequestHandler(agent_executor=agent_executor)
-app = Starlette()
-
-a2a_app = A2AStarletteApplication(agent_card=agent_card, http_handler=request_handler)
-a2a_app.add_routes_to_app(app, rpc_url="/a2a/my_agent", agent_card_url="/a2a/my_agent/.well-known/agent-card.json")
+#### 3. Container `PYTHONPATH`
+In the Dockerfile, add the agent directory to `PYTHONPATH` so `import agent_executor` resolves:
+```dockerfile
+ENV PYTHONPATH="/app/agents/{agent_name}:$PYTHONPATH"
 ```
 
 ### 4.B. Vertex AI Agent Engine (Native Tools)
@@ -557,11 +536,59 @@ Gemini Enterprise enforces strict styling on certain primitive A2UI components, 
 * **Limitation:** The `label` property inside `MaterialCheckbox` cannot be reliably styled (e.g., it may default to an illegible grey depending on the environment's base theme).
 * **Workaround:** Omit the `label` property entirely from the `MaterialCheckbox`. Wrap the checkbox in a `MaterialRow` alongside a `MaterialText` component. `MaterialText` fully respects the `"style"` dictionary, allowing you to explicitly set the text color to match your agent's specific theme.
 
-#### C. Nested Card Contrast
-* **Limitation:** Gemini Enterprise does not automatically adjust the contrast of deeply nested cards, which can cause nested cards to blend into the root card (especially in dark modes).
-* **Workaround:** Always explicitly manage the contrast of nested cards. 
-  - **For Dark Themes:** Lighten nested card backgrounds (e.g., from `#121212` to `#1E1E1E`) and use slightly lighter border colors to ensure they pop against the deep black root card.
-  - **For Light Themes:** Use subtle dropshadows, slightly darker grey backgrounds (e.g., `#F5F5F5`), or distinct border colors to differentiate nested cards from the root white card.
+#### D. Gemini Enterprise Canvas & Composite Catalog v0.9 (CRITICAL)
+When deploying A2UI agents to **Gemini Enterprise**, the chat UI hosts rich interfaces inside an interactive **Canvas** panel:
+* **Catalog ID**: Must be set to `"https://www.gstatic.com/vertexaisearch/a2ui/v0_9/gemini_enterprise_composite_catalog.json"`.
+* **Root Canvas Component**: The root component in `updateComponents` for side-panel views MUST be `"component": "Canvas"`, with properties:
+  - `"id": "root"`
+  - `"component": "Canvas"`
+  - `"cardTitle": "Title"`
+  - `"cardDescription": "Subtitle"`
+  - `"cardIcon": "icon_name"`
+  - `"autoOpen": true` (automatically expands the canvas side-panel)
+  - `"children": ["root_card_id"]`
+* **Material Component Names & Syntax**:
+  - `MaterialCard` (uses `"appearance": "raised"|"outlined"|"flat"`, `"children": ["col_id"]`, `"style": {"padding": "16px"}`)
+  - `MaterialColumn` (uses `"children": [...]`, `"align": "stretch"|"start"|"center"|"end"`, `"style": {"gap": "12px"}`)
+  - `MaterialRow` (uses `"children": [...]`, `"align": "center"|"start"|"end"`)
+  - `MaterialText` (uses `"text": "..."`, `"usageHint": "h1"|"h2"|"h3"|"body"`)
+  - `MaterialButton` (uses `"label": "..."`, `"variant": "raised"|"flat"|"stroked"|"basic"`, `"color": "primary"|"accent"|"warn"`, `"action": {"event": {"name": "...", "context": {...}}}}`)
+  - `MaterialDivider`
+* **Input Fields (CRITICAL: `MaterialInput`, NOT `MaterialTextField`)**:
+  - In the Gemini Enterprise Composite Catalog, text input fields are strictly named **`MaterialInput`** (do NOT use `MaterialTextField` or `TextField`).
+  - Properties:
+    ```json
+    {
+      "id": "user_email",
+      "component": "MaterialInput",
+      "label": "Email Address",
+      "placeholder": "user@example.com",
+      "type": "text",
+      "value": { "path": "/user/email" }
+    }
+    ```
+  - Supported `type` values: `"text"`, `"email"`, `"number"`, `"password"`, `"tel"`, `"url"`.
+* **Iframe Embeds (CRITICAL: `IFrameUrl` & `IFrameSrcdoc`)**:
+  - **`IFrameUrl`**: Embeds allowlisted external web applications inside a canvas panel.
+    ```json
+    {
+      "id": "app_frame",
+      "component": "IFrameUrl",
+      "url": "https://example.com/app",
+      "height": 650
+    }
+    ```
+  - **`IFrameSrcdoc`**: Embeds sandboxed, network-restricted inline HTML.
+    ```json
+    {
+      "id": "custom_html",
+      "component": "IFrameSrcdoc",
+      "htmlContent": "<!DOCTYPE html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"connect-src 'none'\"></head><body>...</body></html>",
+      "height": 400
+    }
+    ```
+* **Silent Dropping of Unregistered Components**:
+  - The Gemini Enterprise client renderer validates components against the composite catalog schema. If a component name is invalid or misspelled (e.g. `MaterialTextField`, `WebFrameUrl`, `TextInput`), the renderer **silently skips** the invalid component and renders the remaining valid children without throwing an error message in the chat. If an input field or iframe fails to appear while the surrounding card and buttons render normally, verify the exact component name against the composite catalog schema.
 
 ## 11. Operational Guide & Troubleshooting
 
@@ -898,13 +925,15 @@ json_format.Parse = patched_parse
 logger = logging.getLogger(__name__)
 
 class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
-    def __init__(self):
-        self._runner = runners.Runner(
-            app_name="A2UIAgent",
-            agent=root_agent,
-            session_service=in_memory_session_service.InMemorySessionService(),
-            auto_create_session=True,
-        )
+    def __init__(self, *args, **kwargs):
+        self._runner = kwargs.get('runner')
+        if not self._runner:
+            self._runner = runners.Runner(
+                app_name="A2UIAgent",
+                agent=root_agent,
+                session_service=in_memory_session_service.InMemorySessionService(),
+                auto_create_session=True,
+            )
 
     async def execute(self, context: agent_execution.RequestContext, event_queue: events.EventQueue) -> None:
         query = context.get_user_input()

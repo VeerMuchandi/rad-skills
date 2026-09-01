@@ -93,14 +93,16 @@ apply_monkey_patch()
 
 
 class AdkAgentToA2AExecutor(agent_execution.AgentExecutor):
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         apply_monkey_patch()
-        self._runner = runners.Runner(
-            app_name="A2UIAgent",
-            agent=root_agent,
-            session_service=in_memory_session_service.InMemorySessionService(),
-            auto_create_session=True,
-        )
+        self._runner = kwargs.get('runner')
+        if not self._runner:
+            self._runner = runners.Runner(
+                app_name="A2UIAgent",
+                agent=root_agent,
+                session_service=in_memory_session_service.InMemorySessionService(),
+                auto_create_session=True,
+            )
 
     async def execute(self, context: agent_execution.RequestContext, event_queue: events.EventQueue) -> None:
         query = context.get_user_input()

@@ -30,4 +30,4 @@ To release a new version of the SDK, follow these steps:
 
 ## Internal troubleshooting and notes
 
-See go/a2ui-release for internal information.
+See official release guide for internal information.

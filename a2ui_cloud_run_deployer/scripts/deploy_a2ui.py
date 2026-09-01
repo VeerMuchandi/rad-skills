@@ -130,14 +130,15 @@ WORKDIR /app
 RUN adduser --disabled-password --gecos "" myuser
 USER myuser
 ENV PATH="/home/myuser/.local/bin:$PATH"
+ENV PYTHONPATH="/app/agents/{agent_name}:$PYTHONPATH"
 ENV GOOGLE_GENAI_USE_VERTEXAI=1
 ENV GOOGLE_CLOUD_PROJECT={args.project}
 ENV GOOGLE_CLOUD_LOCATION={args.region}
 
-RUN pip install google-adk=={args.google_adk_version}
+RUN pip install --default-timeout=100 --retries=5 google-adk=={args.google_adk_version}
 
 COPY --chown=myuser:myuser "agents/{agent_name}/" "/app/agents/{agent_name}/"
-RUN pip install -r "/app/agents/{agent_name}/requirements.txt"
+RUN pip install --default-timeout=100 --retries=5 -r "/app/agents/{agent_name}/requirements.txt"
 
 EXPOSE {args.port}
 CMD ["adk", "api_server", "--port={args.port}", "--host=0.0.0.0", "--a2a", "/app/agents"]
