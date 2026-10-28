@@ -3,14 +3,19 @@
 Includes built-in solutions for all common Cloud Run + Gemini Enterprise pitfalls:
 1. Stateless HMAC-SHA256 OAuth 2.0 code/token signing derived from GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET.
 2. Dual-mode TokenVerifier (fast-path HMAC verification + fallback Google OAuth tokeninfo verification for access_token & id_token).
-3. Built-in /authorize (including /authorize{extra:path} for malformed '&key=val' concatenation) that redirects without
+3. Per-Request Multi-Tenant User Token Context (`get_current_user_token()` & `get_current_user_claims()`) for forwarding
+   authenticated 3-Legged OAuth Bearer tokens to downstream partner APIs (replacing static ENV API keys).
+4. Built-in /authorize (including /authorize{extra:path} for malformed '&key=val' concatenation) that redirects without
    Cross-Origin-Opener-Policy headers so Cloud Console 'Verify Auth' popups keep window.opener intact.
-4. Built-in /token supporting HTTP Basic Auth, form-urlencoded, JSON body, PKCE (S256/plain), and guaranteed refresh_token issuance.
-5. TransportSecuritySettings with DNS rebinding protection disabled for Cloud Run (*.a.run.app) Host headers.
-6. Dual-transport ASGI app mounting both StreamableHTTP (/mcp) and SSE (/sse, /messages/), plus /healthz.
+5. Built-in /token supporting HTTP Basic Auth, form-urlencoded, JSON body, PKCE (S256/plain), and guaranteed refresh_token issuance.
+6. RFC 9728 (/.well-known/oauth-protected-resource), RFC 8414 (/.well-known/oauth-authorization-server), and RFC 7591 (/register)
+   Dynamic Client Registration endpoints for universal MCP client compatibility.
+7. TransportSecuritySettings with DNS rebinding protection disabled for Cloud Run (*.a.run.app) Host headers.
+8. Dual-transport ASGI app mounting both StreamableHTTP (/mcp) and SSE (/sse, /messages/), plus /health & /healthz.
 """
 
 import base64
+from contextvars import ContextVar
 import hashlib
 import hmac
 import json
@@ -37,6 +42,24 @@ logging.basicConfig(
 )
 SERVICE_NAME = os.environ.get("MCP_SERVER_NAME", "Custom MCP Server")
 logger = logging.getLogger("cloud-run-mcp-server")
+
+
+# ==============================================================================
+# 0. Multi-Tenant Per-Request User Token Context (3-Legged OAuth Passthrough)
+# ==============================================================================
+
+_CURRENT_USER_TOKEN: ContextVar[Optional[str]] = ContextVar("_CURRENT_USER_TOKEN", default=None)
+_CURRENT_USER_CLAIMS: ContextVar[Optional[Dict[str, Any]]] = ContextVar("_CURRENT_USER_CLAIMS", default=None)
+
+
+def get_current_user_token() -> Optional[str]:
+    """Returns the verified Bearer token of the currently authenticated MCP user (for downstream API passthrough)."""
+    return _CURRENT_USER_TOKEN.get()
+
+
+def get_current_user_claims() -> Dict[str, Any]:
+    """Returns the verified OAuth claims/metadata of the currently authenticated MCP user."""
+    return _CURRENT_USER_CLAIMS.get() or {}
 
 
 # ==============================================================================
@@ -136,6 +159,8 @@ class GoogleOAuthTokenVerifier(TokenVerifier):
                 return None
             raw_scopes = str(payload.get("scp", "openid email profile")).split()
             normalized = set(raw_scopes) | {"openid", "email", "profile"}
+            _CURRENT_USER_TOKEN.set(clean_token)
+            _CURRENT_USER_CLAIMS.set(payload)
             return AccessToken(
                 token=clean_token,
                 client_id=cid or (self.expected_client_ids[0] if self.expected_client_ids else "oauth-client"),
@@ -199,6 +224,8 @@ class GoogleOAuthTokenVerifier(TokenVerifier):
             normalized_scopes.add("openid")
 
         client_id = azp or aud or (self.expected_client_ids[0] if self.expected_client_ids else "google-oauth-client")
+        _CURRENT_USER_TOKEN.set(clean_token)
+        _CURRENT_USER_CLAIMS.set(data)
         return AccessToken(
             token=clean_token,
             client_id=client_id,
@@ -266,6 +293,20 @@ READ_ONLY_ANNOTATIONS = ToolAnnotations(
     openWorldHint=True,
 )
 
+WRITE_IDEMPOTENT_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+
+DESTRUCTIVE_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=False,
+    openWorldHint=True,
+)
+
 mcp = FastMCP(
     name=SERVICE_NAME,
     instructions=os.environ.get(
@@ -291,18 +332,21 @@ async def ping_server(query: str = "hello") -> str:
         query: Input string to echo back.
 
     Returns:
-        JSON string confirming server status and echoed query.
+        JSON string confirming server status, echoed query, and multi-tenant auth context.
     """
+    claims = get_current_user_claims()
     return json.dumps({
         "status": "ok",
         "service": SERVICE_NAME,
         "echo": query,
+        "authenticated_user": claims.get("email") or claims.get("cid") or "anonymous",
+        "has_user_token": get_current_user_token() is not None,
         "timestamp": int(time.time()),
     }, indent=2)
 
 
 # ==============================================================================
-# 5. Built-in OAuth 2.0 Proxy Endpoints (/authorize & /token) & Health Check
+# 5. Built-in OAuth 2.0 Discovery, DCR, /authorize & /token Endpoints
 # ==============================================================================
 
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
@@ -319,6 +363,125 @@ def _is_valid_redirect_uri(uri: str) -> bool:
     if parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1"):
         return True
     return False
+
+
+def _get_public_base_url(request=None) -> str:
+    """Determines the external HTTPS base URL of this MCP server."""
+    env_base = os.environ.get("MCP_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if env_base:
+        return env_base
+    if request is not None and hasattr(request, "headers"):
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+        proto = request.headers.get("x-forwarded-proto") or "https"
+        if host:
+            if "localhost" in host or "127.0.0.1" in host:
+                proto = "http"
+            return f"{proto}://{host}".rstrip("/")
+    return "http://localhost:8080"
+
+
+async def oauth_protected_resource_metadata(request) -> Response:
+    """RFC 9728 OAuth 2.0 Protected Resource Metadata endpoint required by modern MCP clients."""
+    base_url = _get_public_base_url(request)
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Cache-Control": "no-store",
+    }
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=cors_headers)
+    return JSONResponse(
+        {
+            "resource": f"{base_url}/mcp",
+            "authorization_servers": [base_url],
+            "scopes_supported": ["openid", "email", "profile"],
+            "bearer_methods_supported": ["header"],
+            "resource_documentation": f"{base_url}/",
+        },
+        headers=cors_headers,
+    )
+
+
+async def oauth_authorization_server_metadata(request) -> Response:
+    """RFC 8414 OAuth 2.0 Authorization Server Metadata & OpenID Configuration endpoint."""
+    base_url = _get_public_base_url(request)
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Cache-Control": "no-store",
+    }
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=cors_headers)
+    return JSONResponse(
+        {
+            "issuer": base_url,
+            "authorization_endpoint": f"{base_url}/authorize",
+            "token_endpoint": f"{base_url}/token",
+            "registration_endpoint": f"{base_url}/register",
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_methods_supported": [
+                "client_secret_post",
+                "client_secret_basic",
+                "none",
+            ],
+            "code_challenge_methods_supported": ["S256", "plain"],
+            "scopes_supported": ["openid", "email", "profile"],
+        },
+        headers=cors_headers,
+    )
+
+
+async def oauth_register_client(request) -> Response:
+    """RFC 7591 OAuth 2.0 Dynamic Client Registration endpoint used by MCP connectors and mcp-remote."""
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Cache-Control": "no-store",
+    }
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=cors_headers)
+
+    body_data: Dict[str, Any] = {}
+    try:
+        raw = await request.body()
+        if raw:
+            body_data = json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        body_data = {}
+
+    allowed_cids = [
+        c.strip() for c in os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").split(",") if c.strip()
+    ]
+    default_cid = allowed_cids[0] if allowed_cids else "mcp-dynamic-client"
+    default_csec = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+
+    redirect_uris = body_data.get("redirect_uris") or ["https://vertexaisearch.cloud.google.com/oauth-redirect"]
+    client_name = body_data.get("client_name") or "MCP Dynamic Client"
+    auth_method = body_data.get("token_endpoint_auth_method") or (
+        "client_secret_post" if default_csec else "none"
+    )
+    now = int(time.time())
+
+    resp_payload: Dict[str, Any] = {
+        "client_id": default_cid,
+        "client_name": client_name,
+        "client_id_issued_at": now,
+        "redirect_uris": redirect_uris,
+        "grant_types": body_data.get("grant_types") or ["authorization_code", "refresh_token"],
+        "response_types": body_data.get("response_types") or ["code"],
+        "token_endpoint_auth_method": auth_method,
+        "scope": body_data.get("scope") or "openid email profile",
+    }
+    if default_csec:
+        resp_payload["client_secret"] = default_csec
+        resp_payload["client_secret_expires_at"] = 0
+
+    logger.info("OAuth /register dynamically registered MCP client: name=%s, redirect_uris=%s", client_name, redirect_uris)
+    return JSONResponse(resp_payload, status_code=201, headers=cors_headers)
 
 
 async def oauth_authorize(request) -> Response:
@@ -351,8 +514,9 @@ async def oauth_authorize(request) -> Response:
     allowed_cids = [
         c.strip() for c in os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").split(",") if c.strip()
     ]
+    code_challenge = params.get("code_challenge", "").strip()
     client_id = params.get("client_id", "").strip() or (allowed_cids[0] if allowed_cids else "oauth-client")
-    if allowed_cids and client_id not in allowed_cids:
+    if allowed_cids and client_id not in allowed_cids and not code_challenge:
         logger.warning("Rejected /authorize request: client_id did not match GOOGLE_OAUTH_CLIENT_ID")
         return JSONResponse(
             {"error": "unauthorized_client", "error_description": "Invalid client_id"},
@@ -370,7 +534,6 @@ async def oauth_authorize(request) -> Response:
 
     scope = params.get("scope", "openid email profile").strip() or "openid email profile"
     state = params.get("state", "")
-    code_challenge = params.get("code_challenge", "").strip()
     code_challenge_method = params.get("code_challenge_method", "S256").strip() or "S256"
 
     now = int(time.time())
@@ -425,6 +588,9 @@ def _extract_basic_auth(auth_header: str) -> tuple[str, str]:
 async def oauth_token(request) -> Response:
     """OAuth 2.0 Token Endpoint exchanging signed authorization codes or refresh tokens for access + refresh tokens."""
     sec_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
         "Cache-Control": "no-store",
         "Pragma": "no-cache",
         "X-Content-Type-Options": "nosniff",
@@ -478,19 +644,6 @@ async def oauth_token(request) -> Response:
 
     # 1. Handle stateless HMAC-signed authorization_code (mcp_code.*) or refresh_token (mcp_rt.*)
     if incoming_code.startswith("mcp_code.") or incoming_rt.startswith("mcp_rt."):
-        if allowed_cids and client_id not in allowed_cids:
-            return JSONResponse(
-                {"error": "invalid_client", "error_description": "Client ID mismatch"},
-                status_code=401,
-                headers=sec_headers,
-            )
-        if env_csec and client_secret and not hmac.compare_digest(client_secret, env_csec):
-            return JSONResponse(
-                {"error": "invalid_client", "error_description": "Client secret mismatch"},
-                status_code=401,
-                headers=sec_headers,
-            )
-
         if incoming_code.startswith("mcp_code."):
             token_payload = _verify_signed_token(incoming_code, expected_prefix="mcp_code")
             if not token_payload:
@@ -514,6 +667,19 @@ async def oauth_token(request) -> Response:
                     return JSONResponse(
                         {"error": "invalid_grant", "error_description": "PKCE code_verifier mismatch"},
                         status_code=400,
+                        headers=sec_headers,
+                    )
+            elif not expected_cc:
+                if allowed_cids and client_id not in allowed_cids:
+                    return JSONResponse(
+                        {"error": "invalid_client", "error_description": "Client ID mismatch"},
+                        status_code=401,
+                        headers=sec_headers,
+                    )
+                if env_csec and client_secret and not hmac.compare_digest(client_secret, env_csec):
+                    return JSONResponse(
+                        {"error": "invalid_client", "error_description": "Client secret mismatch"},
+                        status_code=401,
                         headers=sec_headers,
                     )
         else:
@@ -613,6 +779,7 @@ async def health(request) -> Response:
             "messages": "/messages/",
             "authorize": "/authorize",
             "token": "/token",
+            "register": "/register",
             "health": "/health",
         },
         "oauth_enabled": _token_verifier is not None,
@@ -620,7 +787,7 @@ async def health(request) -> Response:
 
 
 def get_asgi_app(transport: Optional[str] = None):
-    """Returns a unified Starlette ASGI app supporting StreamableHTTP (/mcp), SSE (/sse), OAuth (/authorize, /token), and /health."""
+    """Returns a unified Starlette ASGI app supporting StreamableHTTP (/mcp), SSE (/sse), OAuth (/authorize, /token, /register), and /health."""
     app = mcp.streamable_http_app()
 
     sse_starlette = mcp.sse_app()
@@ -629,6 +796,12 @@ def get_asgi_app(transport: Optional[str] = None):
         if getattr(route, "path", None) not in existing_paths:
             app.routes.append(route)
 
+    app.routes.insert(0, Route("/.well-known/oauth-protected-resource/{subpath:path}", oauth_protected_resource_metadata, methods=["GET", "OPTIONS"]))
+    app.routes.insert(0, Route("/.well-known/oauth-protected-resource", oauth_protected_resource_metadata, methods=["GET", "OPTIONS"]))
+    app.routes.insert(0, Route("/.well-known/oauth-authorization-server/{subpath:path}", oauth_authorization_server_metadata, methods=["GET", "OPTIONS"]))
+    app.routes.insert(0, Route("/.well-known/oauth-authorization-server", oauth_authorization_server_metadata, methods=["GET", "OPTIONS"]))
+    app.routes.insert(0, Route("/.well-known/openid-configuration", oauth_authorization_server_metadata, methods=["GET", "OPTIONS"]))
+    app.routes.insert(0, Route("/register", oauth_register_client, methods=["POST", "OPTIONS"]))
     app.routes.insert(0, Route("/token", oauth_token, methods=["POST", "GET", "OPTIONS"]))
     app.routes.insert(0, Route("/authorize{extra:path}", oauth_authorize, methods=["GET", "HEAD"]))
     app.routes.insert(0, Route("/authorize", oauth_authorize, methods=["GET", "HEAD"]))
@@ -638,4 +811,3 @@ def get_asgi_app(transport: Optional[str] = None):
     app.routes.insert(0, Route("/healthz", health, methods=["GET", "HEAD"]))
     app.routes.insert(0, Route("/", health, methods=["GET", "HEAD"]))
     return app
-
