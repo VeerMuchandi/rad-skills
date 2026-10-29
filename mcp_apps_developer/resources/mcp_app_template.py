@@ -1,9 +1,11 @@
-"""Starter Template for an Interactive MCP App (`ui://`, `text/html;profile=mcp-app`).
+"""Starter Template for a Brand-Themeable Interactive MCP App (`ui://`, `text/html;profile=mcp-app`).
 
-Implements:
-1. Standard MCP Apps Resource & Tool Metadata (`APP_RESOURCE_URI`, `APP_TOOL_META`, `APP_RESOURCE_META`).
-2. In-memory pre-hydration cache (`set_cached_app_payload`, `get_cached_app_payload`) and server-side payload enricher.
-3. Self-contained HTML/CSS/JS workbench (`build_app_html`) featuring:
+Implements the official MCP Apps Extension (SEP-1865, https://github.com/modelcontextprotocol/ext-apps):
+1. Customizable Corporate Brand & Theme Token System (`BRAND_THEME` -> CSS Custom Properties for colors,
+   fonts, border radius, and automatic light/dark mode adaptation).
+2. Standard MCP Apps Resource & Tool Metadata (`APP_RESOURCE_URI`, `APP_TOOL_META`, `APP_RESOURCE_META`).
+3. In-memory pre-hydration cache (`set_cached_app_payload`, `get_cached_app_payload`) and server-side payload enricher.
+4. Self-contained HTML/CSS/JS workbench (`build_app_html`) featuring:
    - Full SEP-1865 JSON-RPC 2.0 `window.parent.postMessage` bridge (`ui/initialize`, `ui/notifications/initialized`,
      `ui/notifications/tool-input`, `ui/notifications/tool-result`, `ui/notifications/host-context-changed`,
      `ui/notifications/size-changed`, `tools/call`, and `ui/message`).
@@ -19,9 +21,39 @@ from typing import Any, Dict, List, Optional
 
 MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
 
-# Customize these for your MCP server and view name
+# 1. Customize Resource URI & Linked Tool Name for your MCP Server
 APP_RESOURCE_URI = "ui://custom-mcp/interactive-workbench"
 LINKED_SEARCH_TOOL_NAME = "search_records"
+
+# 2. Customize Company Brand & Theme Tokens (Colors, Typography, Shapes)
+BRAND_THEME: Dict[str, str] = {
+    "brand_name": "Enterprise Analytics",
+    "app_title": "Interactive MCP App Workbench",
+    "app_subtitle": "Click any category bar to filter • Trigger live MCP tools or send insights to AI",
+    # Light Mode Palette
+    "primary_color": "#4f46e5",
+    "primary_light": "#eef2ff",
+    "secondary_color": "#0d9488",
+    "bg_canvas": "#f8fafc",
+    "bg_surface": "#ffffff",
+    "border_color": "#e2e8f0",
+    "text_primary": "#0f172a",
+    "text_muted": "#64748b",
+    # Dark Mode Palette
+    "dark_primary_color": "#818cf8",
+    "dark_primary_light": "#1e1b4b",
+    "dark_secondary_color": "#2dd4bf",
+    "dark_bg_canvas": "#0f172a",
+    "dark_bg_surface": "#1e293b",
+    "dark_border_color": "#334155",
+    "dark_text_primary": "#f8fafc",
+    "dark_text_muted": "#94a3b8",
+    # Typography & Corner Radius
+    "font_sans": '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif',
+    "font_mono": 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    "radius_sm": "6px",
+    "radius_md": "10px",
+}
 
 APP_TOOL_META: Dict[str, Any] = {
     "ui": {
@@ -103,8 +135,12 @@ def enrich_app_payload(raw_data: Dict[str, Any]) -> Dict[str, Any]:
     return enriched
 
 
-def build_app_html(initial_payload: Optional[Dict[str, Any]] = None) -> str:
+def build_app_html(
+    initial_payload: Optional[Dict[str, Any]] = None,
+    theme_overrides: Optional[Dict[str, str]] = None,
+) -> str:
     """Builds a self-contained HTML5/CSS/JS bundle for `ui://` (`text/html;profile=mcp-app`)."""
+    theme = {**BRAND_THEME, **(theme_overrides or {})}
     safe_json = json.dumps(initial_payload or get_cached_app_payload() or None).replace("</", "<\\/")
 
     return f"""<!DOCTYPE html>
@@ -112,28 +148,31 @@ def build_app_html(initial_payload: Optional[Dict[str, Any]] = None) -> str:
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Interactive MCP App Workbench</title>
+  <title>{theme["app_title"]}</title>
   <style>
     :root {{
-      --bg: #f8fafc;
-      --surface: #ffffff;
-      --border: #e2e8f0;
-      --text: #0f172a;
-      --text-muted: #64748b;
-      --primary: #4f46e5;
-      --primary-light: #eef2ff;
-      --emerald: #059669;
-      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+      --bg: {theme["bg_canvas"]};
+      --surface: {theme["bg_surface"]};
+      --border: {theme["border_color"]};
+      --text: {theme["text_primary"]};
+      --text-muted: {theme["text_muted"]};
+      --primary: {theme["primary_color"]};
+      --primary-light: {theme["primary_light"]};
+      --secondary: {theme["secondary_color"]};
+      --font-sans: {theme["font_sans"]};
+      --font-mono: {theme["font_mono"]};
+      --radius-sm: {theme["radius_sm"]};
+      --radius-md: {theme["radius_md"]};
     }}
     [data-theme="dark"] {{
-      --bg: #0f172a;
-      --surface: #1e293b;
-      --border: #334155;
-      --text: #f8fafc;
-      --text-muted: #94a3b8;
-      --primary: #818cf8;
-      --primary-light: #1e1b4b;
+      --bg: {theme["dark_bg_canvas"]};
+      --surface: {theme["dark_bg_surface"]};
+      --border: {theme["dark_border_color"]};
+      --text: {theme["dark_text_primary"]};
+      --text-muted: {theme["dark_text_muted"]};
+      --primary: {theme["dark_primary_color"]};
+      --primary-light: {theme["dark_primary_light"]};
+      --secondary: {theme["dark_secondary_color"]};
     }}
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
@@ -151,9 +190,21 @@ def build_app_html(initial_payload: Optional[Dict[str, Any]] = None) -> str:
       flex-wrap: wrap;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: var(--radius-md);
       padding: 12px 14px;
       margin-bottom: 12px;
+    }}
+    .brand-pill {{
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--primary);
+      background: var(--primary-light);
+      padding: 2px 7px;
+      border-radius: 999px;
+      margin-bottom: 3px;
     }}
     .title {{ font-size: 15px; font-weight: 700; }}
     .subtitle {{ font-size: 12px; color: var(--text-muted); }}
@@ -161,14 +212,14 @@ def build_app_html(initial_payload: Optional[Dict[str, Any]] = None) -> str:
     .input {{
       padding: 6px 10px;
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       background: var(--bg);
       color: var(--text);
       font-size: 12.5px;
     }}
     .btn {{
       padding: 6px 12px;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--text);
@@ -190,7 +241,7 @@ def build_app_html(initial_payload: Optional[Dict[str, Any]] = None) -> str:
     .kpi-card {{
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 10px 12px;
     }}
     .kpi-label {{ font-size: 11px; color: var(--text-muted); text-transform: uppercase; }}
@@ -206,7 +257,7 @@ def build_app_html(initial_payload: Optional[Dict[str, Any]] = None) -> str:
     .panel {{
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: var(--radius-md);
       padding: 12px;
     }}
     .panel-title {{
@@ -237,7 +288,7 @@ def build_app_html(initial_payload: Optional[Dict[str, Any]] = None) -> str:
     .bar-fill {{ height: 100%; background: var(--primary); }}
     .card {{
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 10px 12px;
       margin-bottom: 8px;
     }}
@@ -262,8 +313,9 @@ def build_app_html(initial_payload: Optional[Dict[str, Any]] = None) -> str:
 <body>
   <header class="header">
     <div>
-      <div class="title">Interactive MCP App Workbench</div>
-      <div class="subtitle">Click any category bar to filter • Trigger live MCP tools or send insights to AI</div>
+      <span class="brand-pill">{theme["brand_name"]}</span>
+      <div class="title">{theme["app_title"]}</div>
+      <div class="subtitle">{theme["app_subtitle"]}</div>
     </div>
     <div class="toolbar">
       <input id="queryInput" class="input" type="text" placeholder="Search via MCP tool..." />
@@ -380,7 +432,7 @@ def build_app_html(initial_payload: Optional[Dict[str, Any]] = None) -> str:
         try {{
           const res = await sendMcpRequest("ui/initialize", {{
             protocolVersion: "2025-06-18",
-            appInfo: {{ name: "Interactive MCP App Workbench", version: "1.0.0" }},
+            appInfo: {{ name: "{theme["app_title"]}", version: "1.0.0" }},
             appCapabilities: {{}},
           }});
           if (res?.hostContext?.theme) {{
