@@ -358,6 +358,8 @@ def build_app_html(
   <script>
     const INITIAL_PAYLOAD = {safe_json};
     const SEARCH_TOOL_NAME = "{LINKED_SEARCH_TOOL_NAME}";
+    // Keep the approved design theme locked by default so host dark/light mode never overrides the design doc
+    const LOCK_DESIGN_THEME = true;
     let currentPayload = null;
     let activeCategoryFilter = null;
 
@@ -420,9 +422,11 @@ def build_app_html(
           }}
         }}
       }} else if (msg.method === "ui/notifications/host-context-changed") {{
-        const theme = msg.params?.theme;
-        if (theme === "dark" || theme === "light") {{
-          document.documentElement.setAttribute("data-theme", theme);
+        if (!LOCK_DESIGN_THEME) {{
+          const theme = msg.params?.theme;
+          if (theme === "dark" || theme === "light") {{
+            document.documentElement.setAttribute("data-theme", theme);
+          }}
         }}
       }}
     }});
@@ -435,7 +439,7 @@ def build_app_html(
             appInfo: {{ name: "{theme["app_title"]}", version: "1.0.0" }},
             appCapabilities: {{}},
           }});
-          if (res?.hostContext?.theme) {{
+          if (!LOCK_DESIGN_THEME && res?.hostContext?.theme) {{
             document.documentElement.setAttribute("data-theme", res.hostContext.theme);
           }}
         }} catch (_) {{}}

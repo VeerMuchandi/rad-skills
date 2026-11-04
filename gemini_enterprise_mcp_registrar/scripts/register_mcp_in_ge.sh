@@ -181,8 +181,9 @@ if [[ -z "$PROJECT_ID" ]]; then
   exit 1
 fi
 
-PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
 TOKEN=$(gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token)
+export CLOUDSDK_AUTH_ACCESS_TOKEN="$TOKEN"
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
 
 if [[ "$USE_PREPROD" == "true" ]]; then
   DE_HOST="https://preprod-discoveryengine.googleapis.com"
@@ -380,6 +381,24 @@ case "$ACTION" in
         }
       }" | python3 -m json.tool
 
+    FRESH_REDIRECT_LOC=$(curl -s -I "${AUTH_URL}?client_id=${CLIENT_ID}&redirect_uri=https://vertexaisearch.cloud.google.com/oauth-redirect&response_type=code&scope=openid%20email%20profile" | grep -i "^location:" | awk '{print $2}' | tr -d '\r' || true)
+    if [[ -n "$FRESH_REDIRECT_LOC" ]]; then
+      curl -s -X POST "${DE_HOST}/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/collections/$COLLECTION_ID/dataConnector:acquireAndStoreRefreshToken" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "X-Goog-User-Project: $PROJECT_NUMBER" \
+        -H "Content-Type: application/json" \
+        -d "{\"fullRedirectUri\": \"${FRESH_REDIRECT_LOC}\"}" >/dev/null || true
+    fi
+
+    # Wait until DataConnector finishes INITIALIZING before PATCHing bapConfig.enabledActions
+    for _i in $(seq 1 12); do
+      DC_STATE=$(curl -s -H "Authorization: Bearer $TOKEN" -H "X-Goog-User-Project: $PROJECT_NUMBER" \
+        "${DE_HOST}/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/collections/$COLLECTION_ID/dataConnector" \
+        | python3 -c "import sys, json; print(json.load(sys.stdin).get('state', ''))" 2>/dev/null || true)
+      [[ "$DC_STATE" == "ACTIVE" ]] && break
+      sleep 3
+    done
+
     if [[ -n "$ACCESS_TOKEN" ]]; then
       echo "=== [2/4] Discovering dynamic tools from $MCP_URI and updating dataConnector ==="
       TOOLS_SSE=$(curl -s -X POST "$MCP_URI" \
@@ -402,80 +421,50 @@ print(json.dumps({
     'bapConfig': {
         'supportedConnectorModes': ['ACTIONS'],
         'enabledActions': [t['name'] for t in tools]
-    },
-    'dynamicTools': [
-        {
-            'name': t['name'],
-            'displayName': t['name'],
-            'description': t.get('description', ''),
-            'enabled': True
-        }
-        for t in tools
-    ]
+    }
 }))
 " <<< "$TOOLS_SSE" 2>/dev/null || true)
         if [[ -n "$PATCH_BODY" ]]; then
-          curl -s -X PATCH "${DE_HOST}/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/collections/$COLLECTION_ID/dataConnector?updateMask=dynamic_tools,bap_config" \
+          curl -s -X PATCH "${DE_HOST}/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/collections/$COLLECTION_ID/dataConnector?updateMask=bap_config" \
             -H "Authorization: Bearer $TOKEN" \
             -H "X-Goog-User-Project: $PROJECT_NUMBER" \
             -H "Content-Type: application/json" \
             -d "$PATCH_BODY" >/dev/null
-          echo "Populated dynamicTools and bapConfig.enabledActions on $COLLECTION_ID."
+          echo "Populated bapConfig.enabledActions on $COLLECTION_ID."
         fi
       fi
     fi
 
     echo "=== [3/4] Configuring Agent Identity AuthProvider (ge-auth-$FP64) & Agent Registry AuthBinding (ge-bind-$FP64) ==="
-    MCP_SERVER_ID=$(curl -s -H "Authorization: Bearer $TOKEN" -H "X-Goog-User-Project: $PROJECT_NUMBER" \
-      "https://agentregistry.googleapis.com/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/mcpServers" | \
-      python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for s in data.get('mcpServers', []):
-    if s.get('displayName') == '${COLLECTION_ID}' or '${MCP_URI}' in json.dumps(s):
-        print(s['name'].split('/')[-1])
-        break
-" 2>/dev/null || true)
-
     curl -s -X POST \
       -H "Authorization: Bearer $TOKEN" \
       -H "X-Goog-User-Project: $PROJECT_NUMBER" \
       -H "Content-Type: application/json" \
       "https://agentidentity.googleapis.com/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/authProviders?authProviderId=ge-auth-$FP64" \
       -d "{
-        \"displayName\": \"ge-auth-$FP64\",
-        \"oauth2CredentialsFlow\": {
-          \"flowType\": \"AUTHORIZATION_CODE_FLOW\",
-          \"clientId\": \"$CLIENT_ID\",
-          \"clientSecret\": \"$CLIENT_SECRET\",
-          \"authorizationUri\": \"$AUTH_URL\",
-          \"tokenEndpointUri\": \"$TOKEN_URL\",
-          \"scopes\": [\"$SCOPES\"]
-        }
+        \"authProviderTypeParams\": {
+          \"connectorReferenceAuthProvider\": {
+            \"connector\": \"projects/$PROJECT_NUMBER/locations/$LOCATION/collections/$COLLECTION_ID/dataConnector\"
+          }
+        },
+        \"description\": \"Gemini Enterprise connector $COLLECTION_ID\",
+        \"state\": \"ENABLED\"
       }" >/dev/null || true
 
-    if [[ -n "$MCP_SERVER_ID" ]]; then
-      curl -s -X POST \
-        -H "Authorization: Bearer $TOKEN" \
-        -H "X-Goog-User-Project: $PROJECT_NUMBER" \
-        -H "Content-Type: application/json" \
-        "https://agentregistry.googleapis.com/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/bindings?bindingId=ge-bind-$FP64" \
-        -d "{
-          \"displayName\": \"ge-bind-$FP64\",
-          \"source\": {
-            \"identifier\": \"projects/$PROJECT_NUMBER/locations/$LOCATION/workloads/*\"
-          },
-          \"target\": {
-            \"identifier\": \"projects/$PROJECT_NUMBER/locations/$LOCATION/mcpServers/$MCP_SERVER_ID\"
-          },
-          \"authProviderBinding\": {
-            \"authProvider\": \"projects/$PROJECT_ID/locations/$LOCATION/authProviders/ge-auth-$FP64\"
-          }
-        }" >/dev/null || true
-      echo "Bound ge-auth-$FP64 -> ge-bind-$FP64 -> mcpServers/$MCP_SERVER_ID."
-    else
-      echo "Note: Agent Registry mcpServer not yet visible; run --action republish if needed."
-    fi
+    curl -s -X POST \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "X-Goog-User-Project: $PROJECT_NUMBER" \
+      -H "Content-Type: application/json" \
+      "https://agentregistry.googleapis.com/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/bindings?bindingId=ge-bind-$FP64" \
+      -d "{
+        \"target\": {
+          \"identifier\": \"urn:mcp:projects-$PROJECT_NUMBER:projects:$PROJECT_NUMBER:locations:$LOCATION:discoveryengine:collections:$COLLECTION_ID:dataConnector\"
+        },
+        \"authProviderBinding\": {
+          \"authProvider\": \"projects/$PROJECT_NUMBER/locations/$LOCATION/authProviders/ge-auth-$FP64\"
+        }
+      }" >/dev/null || true
+    echo "Bound ge-auth-$FP64 -> ge-bind-$FP64 -> urn:mcp:projects-$PROJECT_NUMBER:...:collections:$COLLECTION_ID:dataConnector."
 
     if [[ -n "$ENGINE_ID" ]]; then
       echo "=== [4/4] Linking ${COLLECTION_ID}_mcp_data to Engine $ENGINE_ID ==="
@@ -506,57 +495,36 @@ for s in data.get('mcpServers', []):
       "https://preprod-discoveryengine.googleapis.com/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/collections/$COLLECTION_ID/dataConnector?updateMask=refreshInterval" \
       -d '{"refreshInterval": "86400s"}' | python3 -m json.tool
 
-    if [[ -n "$CLIENT_ID" && -n "$CLIENT_SECRET" && -n "$AUTH_URL" && -n "$TOKEN_URL" ]]; then
-      echo "=== [2/2] Ensuring Agent Identity AuthProvider (ge-auth-$FP64) & Agent Registry AuthBinding (ge-bind-$FP64) ==="
-      MCP_SERVER_ID=$(curl -s -H "Authorization: Bearer $TOKEN" -H "X-Goog-User-Project: $PROJECT_NUMBER" \
-        "https://agentregistry.googleapis.com/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/mcpServers" | \
-        python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for s in data.get('mcpServers', []):
-    if s.get('displayName') == '${COLLECTION_ID}':
-        print(s['name'].split('/')[-1])
-        break
-" 2>/dev/null || true)
-
-      curl -s -X POST \
-        -H "Authorization: Bearer $TOKEN" \
-        -H "X-Goog-User-Project: $PROJECT_NUMBER" \
-        -H "Content-Type: application/json" \
-        "https://agentidentity.googleapis.com/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/authProviders?authProviderId=ge-auth-$FP64" \
-        -d "{
-          \"displayName\": \"ge-auth-$FP64\",
-          \"oauth2CredentialsFlow\": {
-            \"flowType\": \"AUTHORIZATION_CODE_FLOW\",
-            \"clientId\": \"$CLIENT_ID\",
-            \"clientSecret\": \"$CLIENT_SECRET\",
-            \"authorizationUri\": \"$AUTH_URL\",
-            \"tokenEndpointUri\": \"$TOKEN_URL\",
-            \"scopes\": [\"$SCOPES\"]
+    echo "=== [2/2] Ensuring Agent Identity AuthProvider (ge-auth-$FP64) & Agent Registry AuthBinding (ge-bind-$FP64) ==="
+    curl -s -X POST \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "X-Goog-User-Project: $PROJECT_NUMBER" \
+      -H "Content-Type: application/json" \
+      "https://agentidentity.googleapis.com/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/authProviders?authProviderId=ge-auth-$FP64" \
+      -d "{
+        \"authProviderTypeParams\": {
+          \"connectorReferenceAuthProvider\": {
+            \"connector\": \"projects/$PROJECT_NUMBER/locations/$LOCATION/collections/$COLLECTION_ID/dataConnector\"
           }
-        }" >/dev/null || true
+        },
+        \"description\": \"Gemini Enterprise connector $COLLECTION_ID\",
+        \"state\": \"ENABLED\"
+      }" >/dev/null || true
 
-      if [[ -n "$MCP_SERVER_ID" ]]; then
-        curl -s -X POST \
-          -H "Authorization: Bearer $TOKEN" \
-          -H "X-Goog-User-Project: $PROJECT_NUMBER" \
-          -H "Content-Type: application/json" \
-          "https://agentregistry.googleapis.com/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/bindings?bindingId=ge-bind-$FP64" \
-          -d "{
-            \"displayName\": \"ge-bind-$FP64\",
-            \"source\": {
-              \"identifier\": \"projects/$PROJECT_NUMBER/locations/$LOCATION/workloads/*\"
-            },
-            \"target\": {
-              \"identifier\": \"projects/$PROJECT_NUMBER/locations/$LOCATION/mcpServers/$MCP_SERVER_ID\"
-            },
-            \"authProviderBinding\": {
-              \"authProvider\": \"projects/$PROJECT_ID/locations/$LOCATION/authProviders/ge-auth-$FP64\"
-            }
-          }" >/dev/null || true
-        echo "Bound ge-auth-$FP64 -> ge-bind-$FP64 -> mcpServers/$MCP_SERVER_ID."
-      fi
-    fi
+    curl -s -X POST \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "X-Goog-User-Project: $PROJECT_NUMBER" \
+      -H "Content-Type: application/json" \
+      "https://agentregistry.googleapis.com/v1alpha/projects/$PROJECT_NUMBER/locations/$LOCATION/bindings?bindingId=ge-bind-$FP64" \
+      -d "{
+        \"target\": {
+          \"identifier\": \"urn:mcp:projects-$PROJECT_NUMBER:projects:$PROJECT_NUMBER:locations:$LOCATION:discoveryengine:collections:$COLLECTION_ID:dataConnector\"
+        },
+        \"authProviderBinding\": {
+          \"authProvider\": \"projects/$PROJECT_NUMBER/locations/$LOCATION/authProviders/ge-auth-$FP64\"
+        }
+      }" >/dev/null || true
+    echo "Bound ge-auth-$FP64 -> ge-bind-$FP64 -> urn:mcp:projects-$PROJECT_NUMBER:...:collections:$COLLECTION_ID:dataConnector."
     ;;
 
   *)

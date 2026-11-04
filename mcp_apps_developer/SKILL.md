@@ -19,10 +19,10 @@ Use this skill whenever a partner or developer wants to **design and build inter
 > [!IMPORTANT]
 > **Never jump straight to generating HTML/JS code when asked to design or plan an MCP App.**
 > Always follow a strict two-phase workflow:
-> 1. **Phase 1 — UX & Brand Theme Design Gate (Produce Design Document & STOP):**
->    Analyze the MCP server's tools and data payloads, define the visual workflow patterns, capture the partner's **Brand & Theme Tokens** (colors, typography, border radius, light/dark mode), specify the bidirectional MCP interactions (`tools/call` and `ui/message`), write a UX Design Artifact (`<MCP_SERVER_DIR>/design/mcp_apps_ux_design.md`), and **STOP for user review and approval**.
+> 1. **Phase 1 — UX, Brand Theme & Visual Wireframe Design Gate (Produce Design Document with Nano Banana Wireframes & STOP):**
+>    Analyze the MCP server's tools and data payloads, define the visual workflow patterns, capture the partner's **Brand & Theme Tokens** (colors, typography, border radius, light/dark mode), specify the bidirectional MCP interactions (`tools/call` and `ui/message`), **generate visual UI wireframe mockups for each proposed MCP App using Nano Banana (`generate_image`, 16:9 aspect ratio, interface-only without device frames)**, copy the generated wireframe images into `<MCP_SERVER_DIR>/design/`, embed them into the UX Design Document (`<MCP_SERVER_DIR>/design/mcp_apps_ux_design.md`), and **STOP for user review and approval**.
 > 2. **Phase 2 — Implementation, Wiring & Deployment:**
->    Once the user approves the UX design and brand theme, implement the self-contained MCP App module(s) from [`resources/mcp_app_template.py`](./resources/mcp_app_template.py), wire the `@mcp.resource` and `EmbeddedResource` tools in `server.py`, verify locally, and deploy to Cloud Run.
+>    Once the user approves the UX design, wireframes, and brand theme, implement the self-contained MCP App module(s) from [`resources/mcp_app_template.py`](./resources/mcp_app_template.py), wire the `@mcp.resource` and `EmbeddedResource` tools in `server.py`, verify locally, and deploy to Cloud Run.
 
 ---
 
@@ -46,22 +46,24 @@ sequenceDiagram
     Host->>Host: iframe sends postMessage(ui/message) -> Host submits prompt to LLM
 ```
 
-### 1. Corporate Brand & Theme Customization System (CSS Custom Properties)
-Partners require MCP Apps to match their company's visual identity and design system. Every MCP App built with this skill must parameterize its styling via a structured **`BRAND_THEME` token dictionary** injected into `:root` and `[data-theme="dark"]` CSS variables (see [`resources/mcp_app_template.py`](./resources/mcp_app_template.py)):
+### 1. Corporate Brand & Theme Customization System (CSS Custom Properties & Strict Design Compliance)
+Partners require MCP Apps to match their company's visual identity and approved design specification. Every MCP App built with this skill must parameterize its styling via a structured **`BRAND_THEME` token dictionary** injected into `:root` and `[data-theme="dark"]` CSS variables (see [`resources/mcp_app_template.py`](./resources/mcp_app_template.py)):
 * **Color Palette Tokens:**
-  * `--brand-primary`: Primary corporate action color (buttons, active tabs, key metrics)
-  * `--brand-primary-light`: Soft tint for badges, hover states, and active backgrounds
-  * `--brand-secondary` / `--brand-accent`: Secondary chart series and highlight accents
-  * `--bg-canvas` & `--bg-surface`: Page background and card/panel surface colors
+  * `--header-bg` & `--header-text`: Top institutional/corporate banner and inset control bar colors
+  * `--brand-primary` / `--primary`: Primary corporate action color (buttons, active tab underlines, primary chart series)
+  * `--brand-primary-light` / `--primary-light`: Soft tint for badges and active pill states
+  * `--brand-secondary` / `--brand-accent`: Secondary chart series, status pills, and highlight accents
+  * `--bg-canvas` & `--bg-surface`: Outer canvas background and card/table/chart surface colors
   * `--text-primary` & `--text-secondary`: High-contrast body and muted label typography
-  * `--status-success`, `--status-warning`, `--status-danger`: Semantic status badges
+  * `--status-success`, `--status-warning`, `--status-danger`: Semantic status badges and delta bars
 * **Typography & Shape Tokens:**
   * `--font-sans`: Company primary UI font stack (e.g., `'Inter', 'Google Sans', system-ui, sans-serif`)
   * `--font-display`: Optional heading/brand display font
-  * `--font-mono`: Monospace font for IDs, tickers, code, and numerical tables
-  * `--radius-sm`, `--radius-md`, `--radius-lg`: Corner rounding matching the partner's UI style (sharp `4px`, modern `8px–12px`, or pill `16px+`)
-* **Host Theme Synchronization:**
-  * Automatically listen for `ui/notifications/host-context-changed` and `initRes.hostContext.theme` (`"light"` or `"dark"`) so the company theme adapts cleanly when the user toggles dark mode in the host client.
+  * `--font-mono`: Monospace font (`font-variant-numeric: tabular-nums`) for IDs, tickers, code, and numerical tables
+  * `--radius-sm`, `--radius-md`, `--radius-lg`: Corner rounding matching the partner's UI style (sharp `4px–6px`, modern `8px–12px`, or pill `16px+`)
+* **Strict Design Theme Compliance & Host Theme Lock (`LOCK_DESIGN_THEME = true`):**
+  * **Always follow the exact color scheme and theme mode specified in the approved UX Design Document (`mcp_apps_ux_design.md`) and Nano Banana wireframes.**
+  * By default, set `const LOCK_DESIGN_THEME = true;` and initialize `<html data-theme="light">` (or `"dark"` if the approved design doc specifies a dark theme) so that `initRes.hostContext.theme` and `ui/notifications/host-context-changed` from the MCP Host (e.g., Gemini Enterprise running in dark mode) **never silently override** the approved corporate color scheme. Only enable automatic host theme switching (`LOCK_DESIGN_THEME = false`) if the design document explicitly requests host-driven theme overrides. Provide an optional manual in-app toggle button (`☀️ / 🌙`) if dual-theme support is desired.
 
 ### 2. The 3 Required Metadata & Resource Contracts
 Every MCP App requires three matching constants (see [`resources/mcp_app_template.py`](./resources/mcp_app_template.py)):
@@ -103,11 +105,16 @@ Different MCP hosts load `ui://` apps in slightly different ways. Always impleme
 ### 4. Bidirectional JSON-RPC 2.0 `window.parent.postMessage` Bridge
 Inside the self-contained HTML bundle (`build_app_html()`), always include the standard SEP-1865 JSON-RPC bridge:
 * **Handshake & Auto-Sizing:**
-  * Send `ui/initialize` on load, apply `hostContext.theme` (`light`/`dark`), send `ui/notifications/initialized`, and attach a `ResizeObserver` that emits `ui/notifications/size-changed`.
+  * Send `ui/initialize` on load, keep the approved design theme locked (`LOCK_DESIGN_THEME = true`) unless host theme override is explicitly requested, send `ui/notifications/initialized`, and attach a `ResizeObserver` that emits `ui/notifications/size-changed`.
 * **Receiving Data from the Host:**
   * Listen for `ui/notifications/tool-input` (to pre-fill inputs while the tool is running) and `ui/notifications/tool-result` (extracting `params.structuredContent` or parsing `params.content[0].text` JSON).
-* **Triggering Live MCP Tools from Inside the UI (`tools/call`):**
-  * Interactive controls (search bars, filter selectors, side-by-side comparison pickers) call `sendMcpRequest("tools/call", { name: "<tool_name>", arguments: {...} })` with an automatic fallback to a Cloud Run HTTP helper endpoint (`/apps/api/<view>`) when opened standalone in a browser tab.
+* **Smart State Merging on Partial `ui/notifications/tool-result` Events (CRITICAL):**
+  * When an interactive control inside the iframe calls `sendMcpRequest("tools/call", ...)` for a secondary/filter tool (e.g., tracing a single XBRL concept or filtering filings), the MCP Host **also** broadcasts a `ui/notifications/tool-result` message back to the iframe containing only that tool's partial payload.
+  * Therefore, `hydratePayload(raw)` **MUST NEVER** blindly overwrite `currentPayload = raw`. It must **merge** partial updates into `currentPayload` (preserving existing tabs, KPI strips, and entity metadata for the same entity) and re-render all tabs cleanly.
+  * Additionally, every data tool decorated with `meta=APP_TOOL_META` on the server must enrich/backfill all tabs so that whichever tool the LLM invokes first, every tab in the UI is populated on initial load.
+* **Triggering Live MCP Tools from Inside the UI (`tools/call`) & `srcdoc` Fallback (CRITICAL):**
+  * **Instant Client-Side Synthesis First:** Whenever the user clicks a filter pill, metric switcher, or trace button for a metric already present in `currentPayload`, immediately synthesize and render the view synchronously (`<1ms`) from `currentPayload` before awaiting the network call, and preserve the user's active filter selection so delayed background `tool-result` notifications cannot overwrite it.
+  * **Short Host RPC Timeout + Always Fall Through to Absolute HTTP Endpoint:** Inside a sandboxed `srcdoc` iframe (`window.location.origin === "null"`), relative `fetch("/apps/api/tool-call")` calls fail with a network error. Always inject the deployed Cloud Run base URL (`const API_BASE_URL = "https://<service>.a.run.app"`), list `API_BASE_URL` explicitly in `ui.csp.connectDomains`, use a short timeout (`2500ms`) on `sendMcpRequest("tools/call", ...)`, and **always** fall through (outside `try/catch`) to `fetch(`${API_BASE_URL}/apps/api/tool-call`, ...)` if `sendMcpRequest` times out, rejects, or resolves without an extractable payload.
 * **Sending Context Back to the AI Chat (`ui/message`):**
   * Include an **"✨ Ask AI to Analyze"** action that posts `method: "ui/message"` with the user's currently filtered view or exported markdown table so the LLM can reason over what the user is inspecting.
 
@@ -125,7 +132,7 @@ Inside the self-contained HTML bundle (`build_app_html()`), always include the s
 
 ## Step-by-Step Workflow
 
-### Phase 1: UX & Brand Theme Design (Produce Artifact & STOP)
+### Phase 1: UX, Brand Theme & Visual Wireframe Design (Produce Design Document with Nano Banana Wireframes & STOP)
 When asked to design MCP Apps for an existing or planned MCP server:
 1. **Audit Tools & Payloads:** Inspect the MCP server's existing `@mcp.tool()` functions and JSON outputs to identify where plain-text markdown falls short (e.g., dense multi-dimensional tables, time-series trends, hierarchical trees, multi-entity comparisons).
 2. **Select Visual Archetype(s):**
@@ -136,20 +143,31 @@ When asked to design MCP Apps for an existing or planned MCP server:
    * **Archetype E — Synchronized Document / Media Split-Viewer:** Media/chart carousel paired with structured document sections and search highlighting.
 3. **Define the Brand & Theme Specification:**
    * Extract or confirm the company's brand colors (`--brand-primary`, `--brand-secondary`, `--bg-canvas`, `--bg-surface`), font stack (`--font-sans`, `--font-mono`), border radius, and header/logo treatment.
-4. **Write the UX Design Document (`<MCP_SERVER_DIR>/design/mcp_apps_ux_design.md`) and STOP:**
-   * Document each proposed MCP App (`ui://<server>/<view>`), its linked MCP tools, wireframe layout / tabs, interactive `tools/call` & `ui/message` flows, server-side payload enrichment schema, and CSS brand theme variables.
+4. **Generate Visual UI Wireframes Using Nano Banana (`generate_image`):**
+   * For each proposed MCP App view, generate a high-fidelity UI wireframe mockup using the **Nano Banana** image generation tool (`generate_image` with `AspectRatio="16:9"`, flat interface-only without surrounding laptop/phone device frames) reflecting the company's brand colors, KPI cards, tabs, interactive charts/tables, and `"Ask AI"` action buttons.
+   * **Maintain Strict Visual Theme Consistency Across All Views:** All wireframes within the same MCP server design document MUST use the **exact same visual theme** (same background canvas, card surface color, top header bar treatment, typography, and accent palette). When generating wireframes for a second or third MCP App, pass the first generated wireframe image path in `ImagePaths` of `generate_image` as a style reference so every view looks like part of a unified product suite.
+   * Copy the generated image files into `<MCP_SERVER_DIR>/design/` (e.g., `<MCP_SERVER_DIR>/design/<view>_wireframe.jpg`) and embed them directly in `<MCP_SERVER_DIR>/design/mcp_apps_ux_design.md` alongside ASCII structural layouts.
+5. **Write the UX Design Document (`<MCP_SERVER_DIR>/design/mcp_apps_ux_design.md`) and STOP:**
+   * Document each proposed MCP App (`ui://<server>/<view>`), its linked MCP tools, embedded Nano Banana wireframe mockup + structural layout / tabs, interactive `tools/call` & `ui/message` flows, server-side payload enrichment schema, and CSS brand theme variables.
    * **STOP and request user approval** before writing implementation code.
 
 ### Phase 2: Build, Wire & Verify (After Design Approval)
+> [!CAUTION]
+> **Mandatory Design Theme & Wireframe Compliance Gate:**
+> The Phase 2 HTML/CSS/SVG implementation **MUST strictly comply** with the color scheme, typography, layout structure, and visual theme approved in `<MCP_SERVER_DIR>/design/mcp_apps_ux_design.md` and its Nano Banana wireframes:
+> 1. **Exact Color Token Mapping:** Every background (`--bg`), card surface (`--surface`), top/inset banner (`--header-bg`), button fill, status badge, table row, and SVG/Canvas chart series **must** use the exact hex values defined in the design document's `BRAND_THEME` table. Never leave default template colors or hardcode off-palette hex values in CSS or SVG elements.
+> 2. **Lock Approved Default Theme Mode (`LOCK_DESIGN_THEME = true`):** Always render the app in the exact theme mode (e.g., `data-theme="light"`) approved in the design document and wireframes, and lock `LOCK_DESIGN_THEME = true` so `hostContext.theme` from the MCP host never overrides the approved color scheme on load.
+> 3. **Side-by-Side Wireframe Verification:** View the approved wireframe image(s) in `<MCP_SERVER_DIR>/design/` and verify that the implemented header banner, inset control strip, KPI cards, navigation tabs, chart series colors/legends, table columns (including inline bars/pills), and `"Ask AI"` action buttons visually match the wireframe.
+
 1. **Create the MCP App Module(s):**
-   * Copy [`resources/mcp_app_template.py`](./resources/mcp_app_template.py) into `<MCP_SERVER_DIR>/mcp_apps/<view_name>_app.py`.
-   * Configure `BRAND_THEME` with the approved corporate colors, fonts, and border radii.
-   * Implement `enrich_app_payload(raw_data)` and `build_app_html(initial_payload)`.
+   * Copy [`resources/mcp_app_template.py`](./resources/mcp_app_template.py) into `<MCP_SERVER_DIR>/mcp_apps/<view_name>_app.py` (and shared `brand_theme.py` when building multiple views).
+   * Configure `BRAND_THEME` with the exact approved corporate colors, fonts, and border radii from `<MCP_SERVER_DIR>/design/mcp_apps_ux_design.md`.
+   * Implement `enrich_app_payload(raw_data)` and `build_app_html(initial_payload)` matching the approved wireframe layout and chart/table specifications.
 2. **Wire into FastMCP (`server.py`):**
    * Register `@mcp.resource(APP_RESOURCE_URI, mime_type=MCP_APP_MIME_TYPE, meta=APP_RESOURCE_META)`.
    * Add `meta=APP_TOOL_META` to the linked data tool(s).
    * Add `@mcp.tool(annotations=READ_ONLY_ANNOTATIONS, meta=APP_TOOL_META) async def open_<view>_app(...) -> CallToolResult` returning `TextContent` + `EmbeddedResource` + `structuredContent`.
    * Mount `Route("/apps/raw/<view-name>", ...)` in `get_asgi_app()`.
 3. **Verify Locally & Deploy to Cloud Run:**
-   * Verify `GET /apps/raw/<view-name>` in browser/curl and `POST /mcp` (`resources/read` and `tools/call` for `open_<view>_app`).
+   * Verify `GET /apps/raw/<view-name>` in browser/curl and `POST /mcp` (`resources/read` and `tools/call` for `open_<view>_app`), confirming all CSS custom properties and chart colors match the design doc.
    * Deploy using [`../cloud_run_mcp_server_creator/scripts/deploy_cloud_run_mcp.sh`](../cloud_run_mcp_server_creator/scripts/deploy_cloud_run_mcp.sh).

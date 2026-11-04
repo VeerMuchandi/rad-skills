@@ -2,6 +2,7 @@
 """Helper script to deploy A2UI ADK agents cleanly to Google Cloud Run."""
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -123,6 +124,34 @@ def main():
       os.path.join(staging_agent_dir, "requirements.txt"),
   )
 
+  # Ensure staged agent.json has the public Cloud Run A2A URL instead of localhost
+  staged_card_path = os.path.join(staging_agent_dir, "agent.json")
+  if os.path.exists(staged_card_path):
+    try:
+      proj_num_cmd = [
+          "gcloud",
+          "projects",
+          "describe",
+          args.project,
+          "--format=value(projectNumber)",
+      ]
+      proj_num = subprocess.run(
+          proj_num_cmd, capture_output=True, text=True, check=False
+      ).stdout.strip()
+      if proj_num:
+        expected_a2a_url = (
+            f"https://{args.service_name}-{proj_num}.{args.region}.run.app/a2a/{agent_name}"
+        )
+        with open(staged_card_path, "r", encoding="utf-8") as f:
+          card_data = json.load(f)
+        if not card_data.get("url") or "localhost" in card_data.get("url", "") or "127.0.0.1" in card_data.get("url", ""):
+          card_data["url"] = expected_a2a_url
+          with open(staged_card_path, "w", encoding="utf-8") as f:
+            json.dump(card_data, f, indent=2)
+          print(f"Patched staged agent.json URL to: {expected_a2a_url}")
+    except Exception as e:
+      print(f"Warning: could not auto-patch agent.json URL: {e}")
+
   # 3. Generate Dockerfile
   dockerfile_content = f"""FROM python:3.11-slim
 WORKDIR /app
@@ -135,7 +164,7 @@ ENV GOOGLE_GENAI_USE_VERTEXAI=1
 ENV GOOGLE_CLOUD_PROJECT={args.project}
 ENV GOOGLE_CLOUD_LOCATION={args.region}
 
-RUN pip install --default-timeout=100 --retries=5 google-adk=={args.google_adk_version}
+RUN pip install --default-timeout=100 --retries=5 "google-adk[a2a]=={args.google_adk_version}" a2a-sdk
 
 COPY --chown=myuser:myuser "agents/{agent_name}/" "/app/agents/{agent_name}/"
 RUN pip install --default-timeout=100 --retries=5 -r "/app/agents/{agent_name}/requirements.txt"

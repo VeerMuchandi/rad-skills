@@ -83,8 +83,10 @@ Ask the user for any missing parameters (never guess `GOOGLE_CLOUD_PROJECT`):
    * `SERVICE_ACCOUNT` (custom least-privilege runtime SA)
    * `USE_SECRET_MANAGER` (`--use-secret-manager` to store and mount secrets from Secret Manager)
 
-### Step 2: Scaffold the MCP Server from Templates
-Copy the reference files from this skill's `resources/` folder into the target MCP server directory:
+### Step 2: Scaffold the MCP Server Directory (`<MCP_SERVER_DIR>`) & Design Folder
+Always create a dedicated directory for the MCP server (`<MCP_SERVER_DIR>`, e.g., `<domain>_mcp_server/`). If producing a design document first, **always save the design inside `<MCP_SERVER_DIR>/design/<mcp_server_name>_design.md`** and stop for user review before generating code.
+
+When scaffolding the implementation, copy the reference files from this skill's `resources/` folder into `<MCP_SERVER_DIR>`:
 * [`resources/server_template.py`](./resources/server_template.py) $\rightarrow$ `server.py` (Customize `FastMCP(name=..., instructions=...)` and add `@mcp.tool()` functions).
 * [`resources/main.py`](./resources/main.py) $\rightarrow$ `main.py`
 * [`resources/Dockerfile`](./resources/Dockerfile) $\rightarrow$ `Dockerfile`

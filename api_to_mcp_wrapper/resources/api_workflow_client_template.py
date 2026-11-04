@@ -14,6 +14,7 @@ Provides:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -66,11 +67,11 @@ class CircuitBreaker:
 def prune_payload_for_llm(
     data: Any,
     *,
-    max_list_items: int = 25,
+    max_list_items: int = 50,
     max_str_len: int = 1500,
     drop_keys: Optional[set[str]] = None,
 ) -> Any:
-    """Recursively prunes verbose downstream API JSON payloads so they stay compact for LLM context windows."""
+    """Recursively prunes verbose downstream API JSON payloads while preserving requested multi-period/multi-entity lists."""
     ignored = drop_keys or {"raw_binary", "base64_content", "_links", "etag", "internal_trace_id"}
 
     if isinstance(data, dict):
@@ -105,6 +106,20 @@ def prune_payload_for_llm(
         return data[:max_str_len] + f"... [truncated {len(data) - max_str_len} chars]"
 
     return data
+
+
+def serialize_for_llm(payload: Dict[str, Any], max_bytes: int = 32768) -> str:
+    """Serializes tool output to JSON with a 32 KB default budget so multi-period arrays are never truncated to 3 items."""
+    pruned = prune_payload_for_llm(payload, max_list_items=50, max_str_len=1000)
+    pretty = json.dumps(pruned, indent=2)
+    if len(pretty.encode("utf-8")) <= max_bytes:
+        return pretty
+    compact = json.dumps(pruned, separators=(",", ":"))
+    if len(compact.encode("utf-8")) <= max_bytes:
+        return compact
+    tighter = prune_payload_for_llm(payload, max_list_items=25, max_str_len=400)
+    return json.dumps(tighter, separators=(",", ":"))
+
 
 
 class DownstreamApiClient:

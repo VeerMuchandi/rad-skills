@@ -68,11 +68,24 @@ flowchart LR
   2. Construct the exact required REST payload server-side.
   3. Attach `WRITE_IDEMPOTENT_ANNOTATIONS` or `DESTRUCTIVE_ANNOTATIONS` (`destructiveHint=True`, `readOnlyHint=False`) so Gemini Enterprise prompts the user for confirmation before executing.
 
-### Pattern 5: Context-Window Protection (`prune_payload_for_llm`)
+### Pattern 5: Context-Window Protection (`prune_payload_for_llm` & 32 KB Serialization Budget)
 * Always pass raw downstream API responses through a normalizer/pruner (included in [`resources/api_workflow_client_template.py`](./resources/api_workflow_client_template.py)) that:
   * Strips `null`/empty fields, internal system metadata, and base64/binary blobs.
   * Truncates overly long text fields (e.g., >1,500 chars) with a clean `...[truncated]` indicator.
-  * Caps array lengths to a sensible maximum (e.g., top 25 items) while preserving `total_count`.
+  * Caps array lengths to a sensible maximum (e.g., `max_list_items=50`) while preserving `total_count`.
+* **Critical Anti-Pattern (Never Truncate Requested Multi-Period / Multi-Entity Lists to 3–4 Items):**
+  * Do **NOT** enforce an overly aggressive `<6 KB` output cap that shrinks `max_list_items` down to `3` or `4` items when a user requests a 4- or 5-year financial/historical comparison. If the LLM sees `"_truncated_notice": "Showing 3 of 4 total items"`, it will assume the MCP server is incomplete and fall back to web search or scraping to find the 4th period!
+  * Use a **32 KB (`max_bytes=32768`, `max_list_items=50`)** serialization budget and prune **width** (nulls, internal IDs, verbose text) rather than slicing away requested periods or records.
+
+### Pattern 6: Schema Harmonization, Derived Subtotals & Provenance Notes (Preventing LLM Web-Browsing Fallbacks)
+* **Problem:** Different companies or upstream tenants report data using different schema tags or omit intermediate subtotals (e.g., Tesla includes finance lease ROU assets in net PP&E; IBM presents *Gross Profit* minus *Total Expense and Other Income* = *Pretax Income* without tagging a standalone `OperatingIncomeLoss` or `OperatingExpenses` subtotal).
+* **Critical Anti-Patterns to Avoid:**
+  1. **Never silently alias a different concept as a fallback tag** (e.g., never use `PretaxIncome` as a fallback tag for `OperatingIncomeLoss`). When an LLM sees `operating_income == pretax_income` despite non-zero `interest_expense`, it detects the discrepancy and attempts to browse raw external `.htm`/`.pdf` URLs (`google:browse`) to verify the source filing.
+  2. **Never return amended partial filings (`10-K/A`) when the user asks for the primary annual report (`latest_annual_10k`)**—set `include_amendments=False` on primary filing pointers and return a multi-period list (`recent_annual_10k_filings`) covering all analyzed years.
+* **Solution:**
+  1. Include comprehensive semantically-equivalent tag lists (e.g., `PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization` for `ppe_net`, `investing_cash_flow` in cash flow statements).
+  2. When a standard subtotal (`operating_income`, `operating_expenses`, `gross_profit`, `free_cash_flow`, `total_debt`) is not tagged directly by an entity, **derive it mathematically** from its reported components (e.g., `EBIT = pretax_income + interest_expense`, `core_operating_expenses = r_and_d + sga`).
+  3. Record the formula in `xbrl_tags_used` / `field_provenance` (`"derived:EBIT (PretaxIncome + InterestExpense...)"`) and include an explicit `accounting_structure_notes` / `schema_reconciliation_notes` array explaining why the source omits the standalone subtotal and instructing the agent **not** to call `google:browse` on citation URLs.
 
 ---
 
@@ -92,11 +105,12 @@ When a partner brings an existing local MCP server (e.g., `npx @partner/mcp-serv
 
 ## Step-by-Step Workflow
 
-### Step 1: Design Phase (Produce Tool Consolidation Plan & STOP)
+### Step 1: Design Phase (Produce Tool Consolidation Plan in `<MCP_SERVER_DIR>/design/` & STOP)
 When asked to design an API-to-MCP server or migrate a `stdio` server:
 1. Inspect the partner's OpenAPI/Swagger spec, GraphQL schema, documentation, or existing `stdio` codebase.
 2. Group the endpoints into **5–10 coarse-grained MCP workflow tools** using the 5 Consolidation Patterns above.
-3. Present a clear **MCP Tool Design Table** (Tool Name, Business Intent, Input Parameters, Orchestrated Downstream Endpoints, Read/Write Annotations, Auth Mode) and **STOP** for user approval if they asked for a design first.
+3. **Always create a dedicated folder for the MCP Server (`<MCP_SERVER_DIR>`, e.g., `<domain>_mcp_server/`) and save the full design document inside a `design/` subfolder under that MCP server folder** (e.g., `<MCP_SERVER_DIR>/design/<mcp_server_name>_design.md`).
+4. Present a clear **MCP Tool Design Table** (Tool Name, Business Intent, Input Parameters, Orchestrated Downstream Endpoints, Normalization/Context-Window Pruning Strategy, Read/Write `ToolAnnotations`, Auth Mode), link to the saved design file in `<MCP_SERVER_DIR>/design/`, and **STOP** for user approval before generating code if they asked for a design first.
 
 ### Step 2: Scaffold Server & Async API Workflow Client
 1. Scaffold the Cloud Run FastMCP server using [`../cloud_run_mcp_server_creator/resources/server_template.py`](../cloud_run_mcp_server_creator/resources/server_template.py).
