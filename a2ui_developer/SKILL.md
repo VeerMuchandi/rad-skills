@@ -778,7 +778,7 @@ A2UI_SCHEMA = r"""{
 """
 ```
 > [!TIP]
-> Refer to the repository root `/usr/local/google/home/veermuchandi/code/agents/rad-workshop/careconnect_navigator_a2ui/a2ui_schema.py` for the full 300+ line JSON Schema string block ensuring v0.8 compliance.
+> Refer to `<agent_dir>/a2ui_schema.py` for the full 300+ line JSON Schema string block ensuring v0.8 compliance.
 
 ## 15. Mock Tester Template (FastAPI + HTML)
 

@@ -19,7 +19,7 @@ Use this skill whenever a developer or partner wants to:
 When building and deploying an MCP Server on Cloud Run for enterprise AI platforms (such as Gemini Enterprise, Vertex AI Agent Engine, Claude, or custom MCP clients), **six critical failure modes** occur if you use naive defaults. You **MUST** follow these patterns in every Cloud Run MCP server you generate:
 
 ### 1. Dual-Layer Security: Public Cloud Run Ingress + Application-Layer OAuth 2.0
-* **Pitfall:** Deploying Cloud Run with `--no-allow-unauthenticated` blocks enterprise MCP clients (such as Gemini Enterprise / Discovery Engine / BAP / Hodor PDP Shim) and browser OAuth 2.0 redirects, because MCP platforms send **application-level OAuth 2.0 Bearer tokens**, not GCP IAM OIDC identity tokens.
+* **Pitfall:** Deploying Cloud Run with `--no-allow-unauthenticated` blocks enterprise MCP clients (such as Gemini Enterprise / Discovery Engine / Agent Identity) and browser OAuth 2.0 redirects, because MCP platforms send **application-level OAuth 2.0 Bearer tokens**, not GCP IAM OIDC identity tokens.
 * **Requirement:**
   1. Deploy Cloud Run with `--allow-unauthenticated` (`allUsers` granted `roles/run.invoker`).
   2. If the GCP Organization enforces Domain Restricted Sharing (`constraints/iam.allowedPolicyMemberDomains`), relax it on the project first:

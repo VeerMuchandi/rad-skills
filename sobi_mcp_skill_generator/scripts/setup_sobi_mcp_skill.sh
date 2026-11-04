@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sobi MCP Skill Generator & Sandbox Onboarding Script
-# 1. Grants Sobi Agent Workload Identity IAM roles (roles/agentidentity.viewer, etc.) for Hodor PDP Shim outbound OAuth token injection
+# 1. Grants Sobi Agent Workload Identity IAM roles (roles/agentidentity.viewer, etc.) for outbound OAuth token injection
 # 2. Generates project-specific <collection_id>_skill/SKILL.md & .zip from live MCP tools/list (or --custom-skill-md)
 # 3. Creates/updates the Skill Agent in Gemini Enterprise with sharingConfig.scope="ALL_USERS"
 # 4. Mounts the skill (skillAgents) and reconciles the MCP server (mcpServers) on Sobi agents (sobi-*)
@@ -331,7 +331,7 @@ print(json.dumps({
     echo "Mounted ${SKILL_REGISTRY_PATH} onto ${SOBI_NAME} (pruned superseded duplicate skills)"
   fi
 
-  # Trigger SobiAgentReconciler via fetchConnectorWidgets?agent=... (populates mcpServers via P4SA and resolves per-user Authorization)
+  # Trigger connector reconciliation via fetchConnectorWidgets?agent=... (populates mcpServers via P4SA and resolves per-user Authorization)
   curl -s -H "Authorization: Bearer $ADC_TOKEN" -H "X-Goog-User-Project: ${GE_PROJECT_NUM}" \
     "https://discoveryengine.googleapis.com/v1alpha/projects/${GE_PROJECT_NUM}/locations/${GE_LOCATION}:fetchConnectorWidgets?agent=projects/${GE_PROJECT_NUM}/locations/${GE_LOCATION}/agents/${SOBI_SHORT_ID}" >/dev/null
 done
